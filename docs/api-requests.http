@@ -1,0 +1,288 @@
+### Madre Pulse API — manual verification requests
+### Use with the VS Code "REST Client" extension, or copy into curl/Postman.
+
+@baseUrl = http://localhost:4000
+
+### Health check (Slice 0)
+GET {{baseUrl}}/health
+
+### Register (Slice 1) — creates org + admin user, sets refresh cookie
+# @name register
+POST {{baseUrl}}/auth/register
+Content-Type: application/json
+
+{
+  "orgName": "Acme Inc",
+  "name": "Ada Lovelace",
+  "email": "ada@acme.test",
+  "password": "correcthorse123"
+}
+
+### Login (Slice 1)
+# @name login
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "ada@acme.test",
+  "password": "correcthorse123"
+}
+
+### Me (Slice 1) — requires accessToken from register/login response
+GET {{baseUrl}}/auth/me
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### Refresh (Slice 1) — uses the refresh_token cookie set by register/login
+POST {{baseUrl}}/auth/refresh
+
+### Logout (Slice 1) — revokes the refresh cookie's token
+POST {{baseUrl}}/auth/logout
+
+### List members (Slice 2)
+GET {{baseUrl}}/members
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### Add a member (Slice 2) — ADMIN only
+# @name addMember
+POST {{baseUrl}}/members
+Authorization: Bearer {{login.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "email": "mia@acme.test",
+  "name": "Mia Manager",
+  "role": "MANAGER"
+}
+
+### Update a member's role/status (Slice 2) — ADMIN only
+PATCH {{baseUrl}}/members/{{addMember.response.body.member.membershipId}}
+Authorization: Bearer {{login.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "status": "DISABLED"
+}
+
+### List clients (Slice 2)
+GET {{baseUrl}}/clients
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### Add a client (Slice 2) — ADMIN or MANAGER
+# @name addClient
+POST {{baseUrl}}/clients
+Authorization: Bearer {{login.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Contoso Ltd",
+  "notes": "Key account"
+}
+
+### List projects (Slice 2)
+GET {{baseUrl}}/projects
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### Add a project (Slice 2) — ADMIN or MANAGER
+# @name addProject
+POST {{baseUrl}}/projects
+Authorization: Bearer {{login.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Website Revamp",
+  "clientId": "{{addClient.response.body.id}}"
+}
+
+### List tasks (Slice 3) — optional query filters: status, priority, assigneeId, projectId
+GET {{baseUrl}}/tasks
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### Add a task (Slice 3) — any authenticated role
+# @name addTask
+POST {{baseUrl}}/tasks
+Authorization: Bearer {{login.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "title": "Design homepage",
+  "priority": "HIGH",
+  "dueDate": "2026-09-01",
+  "projectId": "{{addProject.response.body.id}}",
+  "assigneeId": "{{addMember.response.body.member.userId}}"
+}
+
+### Update a task's status (Slice 3) — any role if creator/assignee, ADMIN/MANAGER for any task
+PATCH {{baseUrl}}/tasks/{{addTask.response.body.id}}
+Authorization: Bearer {{login.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "status": "IN_PROGRESS"
+}
+
+### Delete a task (Slice 3) — ADMIN or MANAGER only
+DELETE {{baseUrl}}/tasks/{{addTask.response.body.id}}
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### List subtasks (Slice 6)
+GET {{baseUrl}}/tasks/{{addTask.response.body.id}}/subtasks
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### Add a subtask (Slice 6) — same edit rights as the parent task
+# @name addSubtask
+POST {{baseUrl}}/tasks/{{addTask.response.body.id}}/subtasks
+Authorization: Bearer {{login.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "title": "Write the spec"
+}
+
+### Mark a subtask done (Slice 6)
+PATCH {{baseUrl}}/tasks/{{addTask.response.body.id}}/subtasks/{{addSubtask.response.body.id}}
+Authorization: Bearer {{login.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "done": true
+}
+
+### List dependencies (Slice 6) — tasks this one is blocked by
+GET {{baseUrl}}/tasks/{{addTask.response.body.id}}/dependencies
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### Add a dependency (Slice 6) — dependsOnId must be another task's id in this org.
+### 400 if it would create a cycle or is a self-reference, 409 if it already exists.
+POST {{baseUrl}}/tasks/{{addTask.response.body.id}}/dependencies
+Authorization: Bearer {{login.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "dependsOnId": "REPLACE_WITH_ANOTHER_TASK_ID"
+}
+
+### Activity feed (Slice 7) — auto-logged: created, status/priority/assignee/due-date changes
+GET {{baseUrl}}/tasks/{{addTask.response.body.id}}/activity
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### List comments (Slice 7)
+GET {{baseUrl}}/tasks/{{addTask.response.body.id}}/comments
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### Post a comment (Slice 7) — any authenticated org member, not just assignee/creator
+POST {{baseUrl}}/tasks/{{addTask.response.body.id}}/comments
+Authorization: Bearer {{login.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "body": "Looks good, proceeding."
+}
+
+### List attachments (Slice 7)
+GET {{baseUrl}}/tasks/{{addTask.response.body.id}}/attachments
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### Upload an attachment (Slice 7) — multipart/form-data, field name "file", 15MB cap.
+### REST Client extension: point @file at a real path on disk.
+# POST {{baseUrl}}/tasks/{{addTask.response.body.id}}/attachments
+# Authorization: Bearer {{login.response.body.accessToken}}
+# Content-Type: multipart/form-data; boundary=boundary
+#
+# --boundary
+# Content-Disposition: form-data; name="file"; filename="sample.txt"
+# Content-Type: text/plain
+#
+# < ./sample.txt
+# --boundary--
+
+### Get a presigned download URL (Slice 7) — 5 minute expiry
+GET {{baseUrl}}/tasks/{{addTask.response.body.id}}/attachments/REPLACE_WITH_ATTACHMENT_ID/download-url
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### List time entries (Slice 8)
+GET {{baseUrl}}/tasks/{{addTask.response.body.id}}/time-entries
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### Log time (Slice 8) — any authenticated org member, date defaults to today, minutes capped at 1440
+# @name addTimeEntry
+POST {{baseUrl}}/tasks/{{addTask.response.body.id}}/time-entries
+Authorization: Bearer {{login.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "minutes": 90,
+  "note": "Initial investigation",
+  "date": "2026-08-19"
+}
+
+### Edit a time entry (Slice 8) — the entry's own logger, or ADMIN/MANAGER
+PATCH {{baseUrl}}/tasks/{{addTask.response.body.id}}/time-entries/{{addTimeEntry.response.body.id}}
+Authorization: Bearer {{login.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "minutes": 100
+}
+
+### Delete a time entry (Slice 8)
+DELETE {{baseUrl}}/tasks/{{addTask.response.body.id}}/time-entries/{{addTimeEntry.response.body.id}}
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### List notifications (Slice 9) — NOT YET LIVE-VERIFIED, see DEVELOPER.md Known limitations.
+### Trigger one first: comment on a task as a different user, or reassign a task, then re-run this.
+GET {{baseUrl}}/notifications
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### Mark a notification read (Slice 9)
+PATCH {{baseUrl}}/notifications/REPLACE_WITH_NOTIFICATION_ID
+Authorization: Bearer {{login.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "read": true
+}
+
+### Mark all notifications read (Slice 9)
+POST {{baseUrl}}/notifications/read-all
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### Reopen workflow (Slice 10) — NOT YET LIVE-VERIFIED, see DEVELOPER.md Known limitations.
+### The target task must be DONE first: PATCH its status to DONE via the Slice 3 endpoint before this.
+
+### List reopen requests for a task
+GET {{baseUrl}}/tasks/{{addTask.response.body.id}}/reopen-requests
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### Request a reopen — 400 if the task isn't DONE, 409 if a PENDING request already exists
+# @name addReopenRequest
+POST {{baseUrl}}/tasks/{{addTask.response.body.id}}/reopen-requests
+Authorization: Bearer {{login.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "reason": "Found a bug after marking this done"
+}
+
+### Approve a reopen request — ADMIN/MANAGER only; sets the task's status back to TODO
+PATCH {{baseUrl}}/tasks/{{addTask.response.body.id}}/reopen-requests/{{addReopenRequest.response.body.id}}
+Authorization: Bearer {{login.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "approve": true,
+  "reviewNote": "Good catch, please fix and re-close"
+}
+
+### Reject a reopen request — ADMIN/MANAGER only
+# PATCH {{baseUrl}}/tasks/{{addTask.response.body.id}}/reopen-requests/{{addReopenRequest.response.body.id}}
+# Authorization: Bearer {{login.response.body.accessToken}}
+# Content-Type: application/json
+#
+# {
+#   "approve": false,
+#   "reviewNote": "Looks fine as-is"
+# }
+
+### Manager dashboard (Slice 11) — ADMIN/MANAGER only. NOT YET LIVE-VERIFIED.
+GET {{baseUrl}}/dashboard
+Authorization: Bearer {{login.response.body.accessToken}}
