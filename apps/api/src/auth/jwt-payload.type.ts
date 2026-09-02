@@ -5,4 +5,5 @@ export interface JwtPayload {
   orgId: string;
   role: RoleName;
   email: string;
+  isSuperAdmin: boolean;
 }

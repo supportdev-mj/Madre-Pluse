@@ -27,6 +27,7 @@ interface AuthContextValue {
   login: (input: LoginInput) => Promise<void>;
   register: (input: RegisterInput) => Promise<void>;
   logout: () => Promise<void>;
+  setOrgName: (name: string) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -94,8 +95,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [clearSession]);
 
+  const setOrgName = useCallback((name: string) => {
+    setOrg((prev) => (prev ? { ...prev, name } : prev));
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ status, user, org, role, login, register, logout }}>{children}</AuthContext.Provider>
+    <AuthContext.Provider value={{ status, user, org, role, login, register, logout, setOrgName }}>
+      {children}
+    </AuthContext.Provider>
   );
 }
 

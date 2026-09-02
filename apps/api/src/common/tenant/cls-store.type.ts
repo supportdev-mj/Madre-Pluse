@@ -5,4 +5,5 @@ export interface AppClsStore extends ClsStore {
   userId?: string;
   orgId?: string;
   role?: RoleName;
+  isSuperAdmin?: boolean;
 }

@@ -22,12 +22,14 @@ interface UserRecord {
   name: string;
   initials: string;
   avatarColor: string;
+  isSuperAdmin: boolean;
 }
 
 interface OrgRecord {
   id: string;
   name: string;
   slug: string;
+  status: string;
 }
 
 export interface AuthResult {
@@ -105,6 +107,7 @@ export class AuthService {
     }
 
     const org = await this.prisma.organization.findUniqueOrThrow({ where: { id: membership.orgId } });
+    this.assertOrgActive(org);
     return this.issueSession(user, org, membership.role as RoleName);
   }
 
@@ -135,6 +138,7 @@ export class AuthService {
     });
     if (!membership) throw new ForbiddenException('No active organization membership');
     const org = await this.prisma.organization.findUniqueOrThrow({ where: { id: membership.orgId } });
+    this.assertOrgActive(org);
 
     const created = await this.createRefreshToken(user.id);
     await this.prisma.refreshToken.update({
@@ -142,7 +146,7 @@ export class AuthService {
       data: { revokedAt: new Date(), replacedById: created.recordId },
     });
 
-    const accessToken = this.signAccessToken(user.id, org.id, membership.role as RoleName, user.email);
+    const accessToken = this.signAccessToken(user.id, org.id, membership.role as RoleName, user.email, user.isSuperAdmin);
     return { accessToken, refreshToken: created.refreshToken, refreshTokenExpiresAt: created.expiresAt };
   }
 
@@ -164,7 +168,7 @@ export class AuthService {
   }
 
   private async issueSession(user: UserRecord, org: OrgRecord, role: RoleName): Promise<AuthResult> {
-    const accessToken = this.signAccessToken(user.id, org.id, role, user.email);
+    const accessToken = this.signAccessToken(user.id, org.id, role, user.email, user.isSuperAdmin);
     const created = await this.createRefreshToken(user.id);
 
     return {
@@ -177,12 +181,19 @@ export class AuthService {
     };
   }
 
-  private signAccessToken(userId: string, orgId: string, role: RoleName, email: string): string {
-    const payload: JwtPayload = { sub: userId, orgId, role, email };
+  private signAccessToken(userId: string, orgId: string, role: RoleName, email: string, isSuperAdmin: boolean): string {
+    const payload: JwtPayload = { sub: userId, orgId, role, email, isSuperAdmin };
     return this.jwt.sign(payload, {
       secret: this.config.get('JWT_ACCESS_SECRET', { infer: true }),
       expiresIn: this.config.get('JWT_ACCESS_TTL', { infer: true }),
     });
+  }
+
+  /** Suspension takes effect within one access-token lifetime (≤15m, next login/refresh), not instantly — same tolerance already accepted for stale role claims. */
+  private assertOrgActive(org: OrgRecord): void {
+    if (org.status === 'SUSPENDED') {
+      throw new ForbiddenException('This organization has been suspended');
+    }
   }
 
   private async createRefreshToken(userId: string): Promise<{ refreshToken: string; expiresAt: Date; recordId: string }> {
@@ -201,7 +212,14 @@ export class AuthService {
   }
 
   private toAuthUser(user: UserRecord): AuthUser {
-    return { id: user.id, email: user.email, name: user.name, initials: user.initials, avatarColor: user.avatarColor };
+    return {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      initials: user.initials,
+      avatarColor: user.avatarColor,
+      isSuperAdmin: user.isSuperAdmin,
+    };
   }
 
   private toAuthOrg(org: OrgRecord): AuthOrg {

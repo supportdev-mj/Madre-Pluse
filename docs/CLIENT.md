@@ -17,6 +17,7 @@ Madre Pulse is a task and project management tool for teams. It helps managers a
 11. **Manager dashboard** — admins and managers get an at-a-glance view of the team: tasks completed in the last 7 days, on-time completion rate, overdue tasks, and a workload breakdown per teammate.
 12. **Reports** — admins and managers can pull a productivity table (tasks completed, on-time rate, time logged per person), optionally filtered to a date range, and download it as a CSV. The page also prints cleanly to PDF straight from the browser's print dialog.
 13. **Reporting a blocker** — if something's stopping you from moving a task forward, report it right from the task's detail page with a short reason. Every admin and manager is notified immediately, and once it's sorted out, they mark it resolved — which notifies you back. No need to formally link it to another task; it's just a way to flag "I'm stuck" and have it actually reach the people who can help.
+14. **Organization settings** — admins can rename the workspace from a new Settings page, and see it at a glance: how many active members you have and when the workspace was created. Every workspace's data is completely private to it — nobody outside your organization can ever see or touch it, and this has been true since day one, not something bolted on later.
 
 ## What's coming, in order
 

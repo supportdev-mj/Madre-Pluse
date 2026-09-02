@@ -8,6 +8,11 @@
 // Slice 14: Task.assigneeId replaced by TaskAssignment (many-to-many) — multiple collaborators per task.
 // Slice 15: Subtask.assigneeId — per-person ownership of a piece of a shared task.
 // Slice 16: BlockerReport — a trackable "I'm blocked" flag, notifies ADMIN/MANAGER, resolvable.
+// Slice 19: GoogleIntegration — per-org Google Workspace OAuth connection (Meet transcripts, step 1
+// of meeting-notes-to-tasks; MeetingNote/TaskDraft models land in a later slice once this is wired up).
+// Slice 18: User.isSuperAdmin (platform-wide, independent of org Role) + Organization.plan/status —
+// a superadmin (product owner) manages every tenant's plan label and active/suspended state.
+// Deliberately NOT wired to real billing/payments (still Phase 3) and NOT self-service — see DEVELOPER.md.
 
 generator client {
   provider      = "prisma-client-js"
@@ -70,17 +75,31 @@ enum BlockerReportStatus {
   RESOLVED
 }
 
-model Organization {
-  id        String   @id @default(cuid())
-  name      String
-  slug      String   @unique
-  createdAt DateTime @default(now())
+enum OrganizationPlan {
+  FREE
+  PRO
+  ENTERPRISE
+}
 
-  memberships   Membership[]
-  clients       Client[]
-  projects      Project[]
-  tasks         Task[]
-  notifications Notification[]
+enum OrganizationStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+model Organization {
+  id        String             @id @default(cuid())
+  name      String
+  slug      String             @unique
+  plan      OrganizationPlan   @default(FREE)
+  status    OrganizationStatus @default(ACTIVE)
+  createdAt DateTime           @default(now())
+
+  memberships       Membership[]
+  clients           Client[]
+  projects          Project[]
+  tasks             Task[]
+  notifications     Notification[]
+  googleIntegration GoogleIntegration?
 
   @@map("organizations")
 }
@@ -92,6 +111,7 @@ model User {
   name         String
   initials     String
   avatarColor  String
+  isSuperAdmin Boolean  @default(false)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -105,10 +125,11 @@ model User {
   taskActivities        TaskActivity[]
   timeEntries           TimeEntry[]
   notifications         Notification[]
-  reopenRequestsMade    ReopenRequest[] @relation("ReopenRequester")
-  reopenRequestsHandled ReopenRequest[] @relation("ReopenReviewer")
-  blockerReportsMade    BlockerReport[] @relation("BlockerReporter")
-  blockerReportsHandled BlockerReport[] @relation("BlockerResolver")
+  reopenRequestsMade    ReopenRequest[]     @relation("ReopenRequester")
+  reopenRequestsHandled ReopenRequest[]     @relation("ReopenReviewer")
+  blockerReportsMade    BlockerReport[]     @relation("BlockerReporter")
+  blockerReportsHandled BlockerReport[]     @relation("BlockerResolver")
+  googleIntegrations    GoogleIntegration[] @relation("GoogleIntegrationConnector")
 
   @@map("users")
 }
@@ -402,4 +423,24 @@ model BlockerReport {
 
   @@index([taskId])
   @@map("blocker_reports")
+}
+
+// Slice 19: one Google Workspace connection per org, used to pull Google Meet transcripts.
+// refreshTokenEncrypted is a real secret (unlike RefreshToken's hashed tokens — this one has to
+// be decrypted and reused to call Google's API later), so it's AES-256-GCM encrypted at rest via
+// TOKEN_ENCRYPTION_KEY, never stored or logged in plaintext. See common/utils/encryption.ts.
+model GoogleIntegration {
+  id                    String    @id @default(cuid())
+  orgId                 String    @unique
+  googleEmail           String
+  refreshTokenEncrypted String
+  connectedById         String
+  lastSyncedAt          DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  org         Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  connectedBy User         @relation("GoogleIntegrationConnector", fields: [connectedById], references: [id])
+
+  @@map("google_integrations")
 }

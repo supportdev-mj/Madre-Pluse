@@ -21,6 +21,10 @@ export const envSchema = z.object({
   SMTP_USER: z.string().default(''),
   SMTP_PASS: z.string().default(''),
   SMTP_FROM: z.string().default('notifications@madrepulse.local'),
+  GOOGLE_CLIENT_ID: z.string().default(''),
+  GOOGLE_CLIENT_SECRET: z.string().default(''),
+  GOOGLE_REDIRECT_URI: z.string().default(''),
+  TOKEN_ENCRYPTION_KEY: z.string().default(''),
 });
 
 export type Env = z.infer<typeof envSchema>;

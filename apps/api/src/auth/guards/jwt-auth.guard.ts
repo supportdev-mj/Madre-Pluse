@@ -17,6 +17,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     this.cls.set('userId', user.sub);
     this.cls.set('orgId', user.orgId);
     this.cls.set('role', user.role);
+    this.cls.set('isSuperAdmin', user.isSuperAdmin);
     return user as TUser;
   }
 }

@@ -7,6 +7,9 @@ import { validateEnv, type Env } from './config/env.validation';
 import { PrismaModule } from './prisma/prisma.module';
 import { HealthController } from './common/health/health.controller';
 import { AuthModule } from './auth/auth.module';
+import { OrganizationsModule } from './organizations/organizations.module';
+import { AdminModule } from './admin/admin.module';
+import { GoogleIntegrationModule } from './google-integration/google-integration.module';
 import { MembersModule } from './members/members.module';
 import { ClientsModule } from './clients/clients.module';
 import { ProjectsModule } from './projects/projects.module';
@@ -41,6 +44,9 @@ import { ReportsModule } from './reports/reports.module';
     }),
     PrismaModule,
     AuthModule,
+    OrganizationsModule,
+    AdminModule,
+    GoogleIntegrationModule,
     MembersModule,
     ClientsModule,
     ProjectsModule,

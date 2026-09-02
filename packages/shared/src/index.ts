@@ -29,6 +29,7 @@ export interface AuthUser {
   name: string;
   initials: string;
   avatarColor: string;
+  isSuperAdmin: boolean;
 }
 
 export interface AuthOrg {
@@ -461,4 +462,54 @@ export interface ProductivityReport {
   from: string | null;
   to: string | null;
   rows: ProductivityRow[];
+}
+
+// --- Slice 17: Organization settings ---
+
+export const ORGANIZATION_PLANS = ['FREE', 'PRO', 'ENTERPRISE'] as const;
+export type OrganizationPlanName = (typeof ORGANIZATION_PLANS)[number];
+
+export const ORGANIZATION_STATUSES = ['ACTIVE', 'SUSPENDED'] as const;
+export type OrganizationStatusName = (typeof ORGANIZATION_STATUSES)[number];
+
+export const updateOrganizationSchema = z.object({
+  name: z.string().trim().min(2, 'Organization name must be at least 2 characters').max(80),
+});
+export type UpdateOrganizationInput = z.infer<typeof updateOrganizationSchema>;
+
+export interface OrganizationSummary {
+  id: string;
+  name: string;
+  slug: string;
+  plan: OrganizationPlanName;
+  status: OrganizationStatusName;
+  memberCount: number;
+  createdAt: string;
+}
+
+// --- Slice 18: Superadmin platform management ---
+
+export const updateOrganizationAdminSchema = z
+  .object({
+    plan: z.enum(ORGANIZATION_PLANS).optional(),
+    status: z.enum(ORGANIZATION_STATUSES).optional(),
+  })
+  .refine((data) => Object.keys(data).length > 0, { message: 'Provide at least one field to update' });
+export type UpdateOrganizationAdminInput = z.infer<typeof updateOrganizationAdminSchema>;
+
+export interface AdminOrganizationSummary {
+  id: string;
+  name: string;
+  slug: string;
+  plan: OrganizationPlanName;
+  status: OrganizationStatusName;
+  memberCount: number;
+  createdAt: string;
+}
+
+// --- Slice 19: Google Meet integration (step 1 — connecting a Google Workspace account) ---
+
+export interface GoogleIntegrationStatus {
+  connected: boolean;
+  googleEmail: string | null;
 }

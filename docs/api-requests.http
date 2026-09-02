@@ -38,6 +38,60 @@ POST {{baseUrl}}/auth/refresh
 ### Logout (Slice 1) — revokes the refresh cookie's token
 POST {{baseUrl}}/auth/logout
 
+### Get organization settings (Slice 17) — any authenticated role
+GET {{baseUrl}}/organization
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### Rename the organization (Slice 17) — ADMIN only
+PATCH {{baseUrl}}/organization
+Authorization: Bearer {{login.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "name": "Acme Incorporated"
+}
+
+### Platform admin (Slice 18) — superadmin only (User.isSuperAdmin, set directly in the DB, see DEVELOPER.md).
+### {{login}} must belong to a superadmin account for these to succeed — a normal ADMIN gets 403.
+
+### List every organization on the platform
+GET {{baseUrl}}/admin/organizations
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### Change an organization's plan
+PATCH {{baseUrl}}/admin/organizations/{{register.response.body.org.id}}
+Authorization: Bearer {{login.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "plan": "PRO"
+}
+
+### Suspend an organization — blocks its login/refresh going forward
+PATCH {{baseUrl}}/admin/organizations/{{register.response.body.org.id}}
+Authorization: Bearer {{login.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "status": "SUSPENDED"
+}
+
+### Google Meet integration (Slice 19) — step 1 only: connect/disconnect. No transcript endpoints yet.
+### Requires GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI/TOKEN_ENCRYPTION_KEY configured — see DEVELOPER.md.
+
+### Check whether this org has connected Google Workspace
+GET {{baseUrl}}/integrations/google/status
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### Get the OAuth consent URL — ADMIN only. Open the returned `url` in a real browser to complete
+### the flow (this can't be exercised as a plain HTTP request — Google needs an actual sign-in).
+GET {{baseUrl}}/integrations/google/connect-url
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### Disconnect Google Workspace — ADMIN only
+DELETE {{baseUrl}}/integrations/google
+Authorization: Bearer {{login.response.body.accessToken}}
+
 ### List members (Slice 2)
 GET {{baseUrl}}/members
 Authorization: Bearer {{login.response.body.accessToken}}
