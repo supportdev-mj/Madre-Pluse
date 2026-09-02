@@ -106,7 +106,20 @@ function TaskCard({ task, draggable }: { task: TaskSummary; draggable: boolean }
           </span>
         )}
       </div>
-      {task.assigneeName && <div className="mt-1 text-xs text-muted">{task.assigneeName}</div>}
+      {task.assignees.length > 0 && (
+        <div className="mt-2 flex items-center -space-x-1.5">
+          {task.assignees.map((a) => (
+            <span
+              key={a.userId}
+              title={a.name}
+              className="flex h-5 w-5 items-center justify-center rounded-full border border-surface text-[9px] font-semibold text-white"
+              style={{ backgroundColor: a.avatarColor }}
+            >
+              {a.initials}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

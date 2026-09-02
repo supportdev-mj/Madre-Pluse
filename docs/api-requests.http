@@ -108,16 +108,25 @@ Content-Type: application/json
   "priority": "HIGH",
   "dueDate": "2026-09-01",
   "projectId": "{{addProject.response.body.id}}",
-  "assigneeId": "{{addMember.response.body.member.userId}}"
+  "assigneeIds": ["{{addMember.response.body.member.userId}}"]
 }
 
-### Update a task's status (Slice 3) — any role if creator/assignee, ADMIN/MANAGER for any task
+### Update a task's status (Slice 3) — any role if creator/one of the assignees, ADMIN/MANAGER for any task
 PATCH {{baseUrl}}/tasks/{{addTask.response.body.id}}
 Authorization: Bearer {{login.response.body.accessToken}}
 Content-Type: application/json
 
 {
   "status": "IN_PROGRESS"
+}
+
+### Replace a task's assignees (Slice 14) — fully replaces the list; [] clears all assignees
+PATCH {{baseUrl}}/tasks/{{addTask.response.body.id}}
+Authorization: Bearer {{login.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "assigneeIds": ["{{addMember.response.body.member.userId}}"]
 }
 
 ### Delete a task (Slice 3) — ADMIN or MANAGER only
@@ -145,6 +154,15 @@ Content-Type: application/json
 
 {
   "done": true
+}
+
+### Assign a subtask to a teammate (Slice 15) — must be one of the parent task's assignees, else 400
+PATCH {{baseUrl}}/tasks/{{addTask.response.body.id}}/subtasks/{{addSubtask.response.body.id}}
+Authorization: Bearer {{login.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "assigneeId": "{{addMember.response.body.member.userId}}"
 }
 
 ### List dependencies (Slice 6) — tasks this one is blocked by
@@ -228,7 +246,7 @@ Content-Type: application/json
 DELETE {{baseUrl}}/tasks/{{addTask.response.body.id}}/time-entries/{{addTimeEntry.response.body.id}}
 Authorization: Bearer {{login.response.body.accessToken}}
 
-### List notifications (Slice 9) — NOT YET LIVE-VERIFIED, see DEVELOPER.md Known limitations.
+### List notifications (Slice 9)
 ### Trigger one first: comment on a task as a different user, or reassign a task, then re-run this.
 GET {{baseUrl}}/notifications
 Authorization: Bearer {{login.response.body.accessToken}}
@@ -246,7 +264,7 @@ Content-Type: application/json
 POST {{baseUrl}}/notifications/read-all
 Authorization: Bearer {{login.response.body.accessToken}}
 
-### Reopen workflow (Slice 10) — NOT YET LIVE-VERIFIED, see DEVELOPER.md Known limitations.
+### Reopen workflow (Slice 10)
 ### The target task must be DONE first: PATCH its status to DONE via the Slice 3 endpoint before this.
 
 ### List reopen requests for a task
@@ -283,6 +301,42 @@ Content-Type: application/json
 #   "reviewNote": "Looks fine as-is"
 # }
 
-### Manager dashboard (Slice 11) — ADMIN/MANAGER only. NOT YET LIVE-VERIFIED.
+### Blocker reports (Slice 16)
+### Raisable by anyone with edit rights on the task (assignee/creator/ADMIN/MANAGER), at any task status.
+
+### List blocker reports for a task
+GET {{baseUrl}}/tasks/{{addTask.response.body.id}}/blocker-reports
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### Report a blocker — free-text reason, not tied to a formal Dependency link
+# @name addBlockerReport
+POST {{baseUrl}}/tasks/{{addTask.response.body.id}}/blocker-reports
+Authorization: Bearer {{login.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "reason": "Waiting on API credentials from the client"
+}
+
+### Resolve a blocker report — ADMIN/MANAGER only; 400 if it isn't OPEN
+PATCH {{baseUrl}}/tasks/{{addTask.response.body.id}}/blocker-reports/{{addBlockerReport.response.body.id}}
+Authorization: Bearer {{login.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "resolutionNote": "Credentials shared in the client channel"
+}
+
+### Manager dashboard (Slice 11) — ADMIN/MANAGER only.
 GET {{baseUrl}}/dashboard
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### Productivity report (Slice 12) — ADMIN/MANAGER only.
+### Optional query params: from, to (ISO dates, e.g. ?from=2026-08-01&to=2026-08-31)
+GET {{baseUrl}}/reports/productivity
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### Productivity report as CSV (Slice 12) — same query params, downloads a file.
+### REST Client extension will offer to save the response; a plain curl needs -o.
+GET {{baseUrl}}/reports/productivity.csv
 Authorization: Bearer {{login.response.body.accessToken}}

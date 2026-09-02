@@ -49,7 +49,7 @@ export class ReopenRequestsService {
   async create(taskId: string, input: CreateReopenRequestInput): Promise<ReopenRequestSummary> {
     const orgId = requireOrgId(this.cls);
     const task = await this.getTaskOrThrow(taskId, orgId);
-    assertCanModifyTask(this.cls, task);
+    assertCanModifyTask(this.cls, { assigneeIds: task.assignments.map((a) => a.userId), createdById: task.createdById });
 
     if (task.status !== 'DONE') {
       throw new BadRequestException('Only a completed task can have a reopen request');
@@ -139,7 +139,10 @@ export class ReopenRequestsService {
   }
 
   private async getTaskOrThrow(taskId: string, orgId: string) {
-    const task = await this.prisma.task.findFirst({ where: { id: taskId, orgId } });
+    const task = await this.prisma.task.findFirst({
+      where: { id: taskId, orgId },
+      include: { assignments: { select: { userId: true } } },
+    });
     if (!task) throw new NotFoundException('Task not found');
     return task;
   }

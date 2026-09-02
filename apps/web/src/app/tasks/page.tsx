@@ -49,7 +49,7 @@ export default function TasksPage() {
   const [priority, setPriority] = useState<TaskPriorityName>('MEDIUM');
   const [dueDate, setDueDate] = useState('');
   const [projectId, setProjectId] = useState('');
-  const [assigneeId, setAssigneeId] = useState('');
+  const [assigneeIds, setAssigneeIds] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
 
   async function loadTasks() {
@@ -91,7 +91,7 @@ export default function TasksPage() {
       priority,
       dueDate: dueDate || undefined,
       projectId: projectId || undefined,
-      assigneeId: assigneeId || undefined,
+      assigneeIds: assigneeIds.length > 0 ? assigneeIds : undefined,
     });
     if (!parsed.success) {
       setError(parsed.error.issues[0]?.message ?? 'Please check your input.');
@@ -107,7 +107,7 @@ export default function TasksPage() {
       setPriority('MEDIUM');
       setDueDate('');
       setProjectId('');
-      setAssigneeId('');
+      setAssigneeIds([]);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add task.');
     } finally {
@@ -144,13 +144,17 @@ export default function TasksPage() {
   const activeMembers = members.filter((m) => m.status === 'ACTIVE');
 
   function canEdit(task: TaskSummary): boolean {
-    return canDelete || task.assigneeId === user?.id || task.createdById === user?.id;
+    return canDelete || task.assignees.some((a) => a.userId === user?.id) || task.createdById === user?.id;
+  }
+
+  function toggleAssignee(userId: string) {
+    setAssigneeIds((prev) => (prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]));
   }
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen sm:pl-60">
       <AppNav />
-      <main className="mx-auto max-w-6xl p-8">
+      <main className="mx-auto max-w-6xl px-4 pb-4 pt-16 sm:px-8 sm:pb-8 sm:pt-8">
         <div className="mb-6 flex items-center justify-between">
           <h1 className="text-xl font-bold text-text">Tasks</h1>
           <div className="flex overflow-hidden rounded-card border border-border text-sm">
@@ -169,7 +173,7 @@ export default function TasksPage() {
 
         {error && <p className="mb-4 text-sm text-red-500">{error}</p>}
 
-        <div className="mb-4 flex gap-4">
+        <div className="mb-4 flex flex-wrap gap-4">
           {view !== 'board' && (
             <label className="flex flex-col gap-1 text-sm text-text">
               Status
@@ -257,7 +261,9 @@ export default function TasksPage() {
                     </td>
                     <td className="px-4 py-2 text-text">{t.priority}</td>
                     <td className="px-4 py-2 text-muted">{formatDueDate(t.dueDate)}</td>
-                    <td className="px-4 py-2 text-muted">{t.assigneeName ?? '—'}</td>
+                    <td className="px-4 py-2 text-muted">
+                      {t.assignees.length > 0 ? t.assignees.map((a) => a.name).join(', ') : '—'}
+                    </td>
                     <td className="px-4 py-2 text-muted">{t.projectName ?? '—'}</td>
                     {canDelete && (
                       <td className="px-4 py-2">
@@ -308,21 +314,25 @@ export default function TasksPage() {
                 ))}
               </select>
             </label>
-            <label className="flex flex-col gap-1 text-sm text-text">
-              Assignee (optional)
-              <select
-                value={assigneeId}
-                onChange={(e) => setAssigneeId(e.target.value)}
-                className="rounded-card border border-border bg-surface-alt px-3 py-2 text-sm text-text"
-              >
-                <option value="">Unassigned</option>
-                {activeMembers.map((m) => (
-                  <option key={m.userId} value={m.userId}>
-                    {m.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <div className="flex flex-col gap-1 text-sm text-text">
+              Assignees (optional)
+              <div className="flex flex-col gap-1.5 rounded-card border border-border bg-surface-alt px-3 py-2">
+                {activeMembers.length === 0 ? (
+                  <span className="text-xs text-muted">No active members yet.</span>
+                ) : (
+                  activeMembers.map((m) => (
+                    <label key={m.userId} className="flex items-center gap-2 text-sm text-text">
+                      <input
+                        type="checkbox"
+                        checked={assigneeIds.includes(m.userId)}
+                        onChange={() => toggleAssignee(m.userId)}
+                      />
+                      {m.name}
+                    </label>
+                  ))
+                )}
+              </div>
+            </div>
             <button
               type="submit"
               disabled={submitting}

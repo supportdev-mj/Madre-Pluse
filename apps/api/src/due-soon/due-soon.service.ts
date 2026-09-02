@@ -26,36 +26,41 @@ export class DueSoonService implements OnModuleInit {
     const now = new Date();
     const cutoff = new Date(now.getTime() + LOOKAHEAD_MS);
 
+    // Intentionally not scoped to one orgId: this runs as a scheduled job with no
+    // request context (no ClsService orgId to read), so it scans across every org
+    // in one pass. Tenant isolation is preserved per-notification below, where each
+    // one is created with the CANDIDATE TASK'S OWN orgId — never mixed across orgs.
     const candidates = await this.prisma.task.findMany({
       where: {
         status: { not: 'DONE' },
-        assigneeId: { not: null },
+        assignments: { some: {} },
         dueDate: { gte: now, lte: cutoff },
       },
+      include: { assignments: { select: { userId: true } } },
     });
 
     let notified = 0;
     for (const task of candidates) {
-      if (!task.assigneeId) continue;
+      for (const { userId } of task.assignments) {
+        const alreadyNotified = await this.prisma.notification.findFirst({
+          where: {
+            taskId: task.id,
+            userId,
+            type: 'TASK_DUE_SOON',
+            createdAt: { gte: new Date(now.getTime() - LOOKAHEAD_MS) },
+          },
+        });
+        if (alreadyNotified) continue;
 
-      const alreadyNotified = await this.prisma.notification.findFirst({
-        where: {
-          taskId: task.id,
-          userId: task.assigneeId,
+        await this.notifications.notify({
+          orgId: task.orgId,
+          userId,
           type: 'TASK_DUE_SOON',
-          createdAt: { gte: new Date(now.getTime() - LOOKAHEAD_MS) },
-        },
-      });
-      if (alreadyNotified) continue;
-
-      await this.notifications.notify({
-        orgId: task.orgId,
-        userId: task.assigneeId,
-        type: 'TASK_DUE_SOON',
-        message: `"${task.title}" is due soon`,
-        taskId: task.id,
-      });
-      notified++;
+          message: `"${task.title}" is due soon`,
+          taskId: task.id,
+        });
+        notified++;
+      }
     }
 
     this.logger.log(`Due-soon scan: ${candidates.length} candidate task(s), ${notified} notification(s) sent`);

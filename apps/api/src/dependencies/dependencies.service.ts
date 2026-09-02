@@ -35,7 +35,7 @@ export class DependenciesService {
   async create(taskId: string, input: CreateDependencyInput): Promise<DependencySummary> {
     const orgId = requireOrgId(this.cls);
     const task = await this.getTaskOrThrow(taskId, orgId);
-    assertCanModifyTask(this.cls, task);
+    assertCanModifyTask(this.cls, { assigneeIds: task.assignments.map((a) => a.userId), createdById: task.createdById });
 
     if (input.dependsOnId === taskId) {
       throw new BadRequestException('A task cannot depend on itself');
@@ -65,7 +65,7 @@ export class DependenciesService {
   async remove(taskId: string, dependencyId: string): Promise<void> {
     const orgId = requireOrgId(this.cls);
     const task = await this.getTaskOrThrow(taskId, orgId);
-    assertCanModifyTask(this.cls, task);
+    assertCanModifyTask(this.cls, { assigneeIds: task.assignments.map((a) => a.userId), createdById: task.createdById });
 
     const existing = await this.prisma.taskDependency.findFirst({ where: { id: dependencyId, taskId } });
     if (!existing) throw new NotFoundException('Dependency not found');
@@ -97,7 +97,10 @@ export class DependenciesService {
   }
 
   private async getTaskOrThrow(taskId: string, orgId: string) {
-    const task = await this.prisma.task.findFirst({ where: { id: taskId, orgId } });
+    const task = await this.prisma.task.findFirst({
+      where: { id: taskId, orgId },
+      include: { assignments: { select: { userId: true } } },
+    });
     if (!task) throw new NotFoundException('Task not found');
     return task;
   }

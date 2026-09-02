@@ -19,7 +19,9 @@ import { TimeEntriesModule } from './time-entries/time-entries.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { DueSoonModule } from './due-soon/due-soon.module';
 import { ReopenRequestsModule } from './reopen-requests/reopen-requests.module';
+import { BlockerReportsModule } from './blocker-reports/blocker-reports.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { ReportsModule } from './reports/reports.module';
 
 @Module({
   imports: [
@@ -51,7 +53,9 @@ import { DashboardModule } from './dashboard/dashboard.module';
     NotificationsModule,
     DueSoonModule,
     ReopenRequestsModule,
+    BlockerReportsModule,
     DashboardModule,
+    ReportsModule,
   ],
   controllers: [HealthController],
 })

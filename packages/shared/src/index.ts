@@ -148,7 +148,7 @@ export const createTaskSchema = z.object({
   priority: z.enum(TASK_PRIORITIES).optional(),
   dueDate: z.coerce.date().optional(),
   projectId: z.string().cuid().optional(),
-  assigneeId: z.string().cuid().optional(),
+  assigneeIds: z.array(z.string().cuid()).optional(),
 });
 export type CreateTaskInput = z.infer<typeof createTaskSchema>;
 
@@ -160,7 +160,7 @@ export const updateTaskSchema = z
     priority: z.enum(TASK_PRIORITIES).optional(),
     dueDate: z.coerce.date().nullable().optional(),
     projectId: z.string().cuid().nullable().optional(),
-    assigneeId: z.string().cuid().nullable().optional(),
+    assigneeIds: z.array(z.string().cuid()).optional(),
   })
   .refine((data) => Object.keys(data).length > 0, { message: 'Provide at least one field to update' });
 export type UpdateTaskInput = z.infer<typeof updateTaskSchema>;
@@ -173,6 +173,13 @@ export const listTasksQuerySchema = z.object({
 });
 export type ListTasksQuery = z.infer<typeof listTasksQuerySchema>;
 
+export interface TaskAssigneeSummary {
+  userId: string;
+  name: string;
+  initials: string;
+  avatarColor: string;
+}
+
 export interface TaskSummary {
   id: string;
   title: string;
@@ -182,8 +189,7 @@ export interface TaskSummary {
   dueDate: string | null;
   projectId: string | null;
   projectName: string | null;
-  assigneeId: string | null;
-  assigneeName: string | null;
+  assignees: TaskAssigneeSummary[];
   createdById: string;
   createdByName: string;
   createdAt: string;
@@ -194,6 +200,7 @@ export interface TaskSummary {
 
 export const createSubtaskSchema = z.object({
   title: z.string().trim().min(1, 'Title is required').max(200),
+  assigneeId: z.string().cuid().optional(),
 });
 export type CreateSubtaskInput = z.infer<typeof createSubtaskSchema>;
 
@@ -201,6 +208,7 @@ export const updateSubtaskSchema = z
   .object({
     title: z.string().trim().min(1, 'Title is required').max(200).optional(),
     done: z.boolean().optional(),
+    assigneeId: z.string().cuid().nullable().optional(),
   })
   .refine((data) => Object.keys(data).length > 0, { message: 'Provide at least one field to update' });
 export type UpdateSubtaskInput = z.infer<typeof updateSubtaskSchema>;
@@ -210,6 +218,7 @@ export interface SubtaskSummary {
   taskId: string;
   title: string;
   done: boolean;
+  assignee: TaskAssigneeSummary | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -315,6 +324,8 @@ export const NOTIFICATION_TYPES = [
   'REOPEN_REQUESTED',
   'REOPEN_APPROVED',
   'REOPEN_REJECTED',
+  'BLOCKER_REPORTED',
+  'BLOCKER_RESOLVED',
 ] as const;
 export type NotificationTypeName = (typeof NOTIFICATION_TYPES)[number];
 
@@ -363,6 +374,35 @@ export interface ReopenRequestSummary {
   reviewedAt: string | null;
 }
 
+// --- Slice 16: Blocker reports ---
+
+export const BLOCKER_REPORT_STATUSES = ['OPEN', 'RESOLVED'] as const;
+export type BlockerReportStatusName = (typeof BLOCKER_REPORT_STATUSES)[number];
+
+export const createBlockerReportSchema = z.object({
+  reason: z.string().trim().min(1, 'Reason is required').max(1000),
+});
+export type CreateBlockerReportInput = z.infer<typeof createBlockerReportSchema>;
+
+export const resolveBlockerReportSchema = z.object({
+  resolutionNote: z.string().trim().max(1000).optional(),
+});
+export type ResolveBlockerReportInput = z.infer<typeof resolveBlockerReportSchema>;
+
+export interface BlockerReportSummary {
+  id: string;
+  taskId: string;
+  reason: string;
+  status: BlockerReportStatusName;
+  reportedById: string;
+  reportedByName: string;
+  resolvedById: string | null;
+  resolvedByName: string | null;
+  resolutionNote: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
 // --- Slice 11: Manager dashboard ---
 
 export interface DashboardOverdueTask {
@@ -370,7 +410,7 @@ export interface DashboardOverdueTask {
   title: string;
   dueDate: string;
   priority: TaskPriorityName;
-  assigneeName: string | null;
+  assigneeNames: string[];
 }
 
 export interface DashboardMemberWorkload {
@@ -381,11 +421,44 @@ export interface DashboardMemberWorkload {
   doneCount: number;
 }
 
+export interface DashboardActivityItem {
+  id: string;
+  actorName: string;
+  taskTitle: string;
+  message: string;
+  createdAt: string;
+}
+
 export interface DashboardSummary {
   statusCounts: Record<TaskStatusName, number>;
+  priorityCounts: Record<TaskPriorityName, number>;
   overdueCount: number;
   overdueTasks: DashboardOverdueTask[];
   completedLast7Days: number;
   onTimeRate: number | null;
   memberWorkload: DashboardMemberWorkload[];
+  recentActivity: DashboardActivityItem[];
+}
+
+// --- Slice 12: Reports ---
+
+export const reportsQuerySchema = z.object({
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
+});
+export type ReportsQuery = z.infer<typeof reportsQuerySchema>;
+
+export interface ProductivityRow {
+  userId: string;
+  name: string;
+  completedCount: number;
+  onTimeRate: number | null;
+  totalMinutes: number;
+  avgMinutesPerTask: number | null;
+}
+
+export interface ProductivityReport {
+  from: string | null;
+  to: string | null;
+  rows: ProductivityRow[];
 }

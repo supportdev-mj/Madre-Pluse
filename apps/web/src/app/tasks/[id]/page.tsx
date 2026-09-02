@@ -4,14 +4,17 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
+  createBlockerReportSchema,
   createCommentSchema,
   createDependencySchema,
   createReopenRequestSchema,
   createSubtaskSchema,
   createTimeEntrySchema,
   type AttachmentSummary,
+  type BlockerReportSummary,
   type CommentSummary,
   type DependencySummary,
+  type MemberSummary,
   type ReopenRequestSummary,
   type SubtaskSummary,
   type TaskActivitySummary,
@@ -66,10 +69,13 @@ export default function TaskDetailPage() {
   const [subtasks, setSubtasks] = useState<SubtaskSummary[]>([]);
   const [dependencies, setDependencies] = useState<DependencySummary[]>([]);
   const [allTasks, setAllTasks] = useState<TaskSummary[]>([]);
+  const [members, setMembers] = useState<MemberSummary[]>([]);
+  const [updatingAssignees, setUpdatingAssignees] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [newSubtask, setNewSubtask] = useState('');
+  const [newSubtaskAssigneeId, setNewSubtaskAssigneeId] = useState('');
   const [addingSubtask, setAddingSubtask] = useState(false);
   const [newDependencyId, setNewDependencyId] = useState('');
   const [addingDependency, setAddingDependency] = useState(false);
@@ -94,8 +100,12 @@ export default function TaskDetailPage() {
   const [reopenReason, setReopenReason] = useState('');
   const [requestingReopen, setRequestingReopen] = useState(false);
 
+  const [blockerReports, setBlockerReports] = useState<BlockerReportSummary[]>([]);
+  const [blockerReason, setBlockerReason] = useState('');
+  const [reportingBlocker, setReportingBlocker] = useState(false);
+
   async function loadAll() {
-    const [t, s, d, all, act, cmts, atts, entries, reopens] = await Promise.all([
+    const [t, s, d, all, act, cmts, atts, entries, reopens, mems, blockers] = await Promise.all([
       apiFetch<TaskSummary>(`/tasks/${taskId}`),
       apiFetch<SubtaskSummary[]>(`/tasks/${taskId}/subtasks`),
       apiFetch<DependencySummary[]>(`/tasks/${taskId}/dependencies`),
@@ -105,6 +115,8 @@ export default function TaskDetailPage() {
       apiFetch<AttachmentSummary[]>(`/tasks/${taskId}/attachments`),
       apiFetch<TimeEntrySummary[]>(`/tasks/${taskId}/time-entries`),
       apiFetch<ReopenRequestSummary[]>(`/tasks/${taskId}/reopen-requests`),
+      apiFetch<MemberSummary[]>('/members'),
+      apiFetch<BlockerReportSummary[]>(`/tasks/${taskId}/blocker-reports`),
     ]);
     setTask(t);
     setSubtasks(s);
@@ -115,6 +127,8 @@ export default function TaskDetailPage() {
     setAttachments(atts);
     setTimeEntries(entries);
     setReopenRequests(reopens);
+    setMembers(mems);
+    setBlockerReports(blockers);
   }
 
   useEffect(() => {
@@ -129,7 +143,10 @@ export default function TaskDetailPage() {
   async function onAddSubtask(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    const parsed = createSubtaskSchema.safeParse({ title: newSubtask });
+    const parsed = createSubtaskSchema.safeParse({
+      title: newSubtask,
+      assigneeId: newSubtaskAssigneeId || undefined,
+    });
     if (!parsed.success) {
       setError(parsed.error.issues[0]?.message ?? 'Please check your input.');
       return;
@@ -142,6 +159,7 @@ export default function TaskDetailPage() {
       });
       setSubtasks((prev) => [...prev, subtask]);
       setNewSubtask('');
+      setNewSubtaskAssigneeId('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add subtask.');
     } finally {
@@ -159,6 +177,19 @@ export default function TaskDetailPage() {
       setSubtasks((prev) => prev.map((s) => (s.id === subtask.id ? updated : s)));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update subtask.');
+    }
+  }
+
+  async function onReassignSubtask(subtask: SubtaskSummary, assigneeId: string) {
+    setError(null);
+    try {
+      const updated = await apiFetch<SubtaskSummary>(`/tasks/${taskId}/subtasks/${subtask.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ assigneeId: assigneeId || null }),
+      });
+      setSubtasks((prev) => prev.map((s) => (s.id === subtask.id ? updated : s)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to reassign subtask.');
     }
   }
 
@@ -364,10 +395,66 @@ export default function TaskDetailPage() {
     }
   }
 
+  async function onReportBlocker(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    const parsed = createBlockerReportSchema.safeParse({ reason: blockerReason });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message ?? 'A reason is required.');
+      return;
+    }
+    setReportingBlocker(true);
+    try {
+      const report = await apiFetch<BlockerReportSummary>(`/tasks/${taskId}/blocker-reports`, {
+        method: 'POST',
+        body: JSON.stringify(parsed.data),
+      });
+      setBlockerReports((prev) => [report, ...prev]);
+      setBlockerReason('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to report blocker.');
+    } finally {
+      setReportingBlocker(false);
+    }
+  }
+
+  async function onResolveBlocker(id: string) {
+    setError(null);
+    try {
+      const resolved = await apiFetch<BlockerReportSummary>(`/tasks/${taskId}/blocker-reports/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({}),
+      });
+      setBlockerReports((prev) => prev.map((r) => (r.id === id ? resolved : r)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to resolve blocker.');
+    }
+  }
+
+  async function onToggleAssignee(userId: string) {
+    if (!task) return;
+    setError(null);
+    const nextIds = task.assignees.some((a) => a.userId === userId)
+      ? task.assignees.filter((a) => a.userId !== userId).map((a) => a.userId)
+      : [...task.assignees.map((a) => a.userId), userId];
+    setUpdatingAssignees(true);
+    try {
+      const updated = await apiFetch<TaskSummary>(`/tasks/${taskId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ assigneeIds: nextIds }),
+      });
+      setTask(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update assignees.');
+    } finally {
+      setUpdatingAssignees(false);
+    }
+  }
+
   if (status !== 'authenticated') return null;
 
   const canEdit = task
-    ? role === 'ADMIN' || role === 'MANAGER' || task.assigneeId === user?.id || task.createdById === user?.id
+    ? role === 'ADMIN' || role === 'MANAGER' || task.assignees.some((a) => a.userId === user?.id) || task.createdById === user?.id
     : false;
 
   const doneCount = subtasks.filter((s) => s.done).length;
@@ -385,9 +472,9 @@ export default function TaskDetailPage() {
   ].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen sm:pl-60">
       <AppNav />
-      <main className="mx-auto max-w-3xl p-8">
+      <main className="mx-auto max-w-3xl px-4 pb-4 pt-16 sm:px-8 sm:pb-8 sm:pt-8">
         <Link href="/tasks" className="mb-4 inline-block text-sm text-accent">
           ← Back to tasks
         </Link>
@@ -412,11 +499,45 @@ export default function TaskDetailPage() {
                   Due: <span className="text-text">{formatDueDate(task.dueDate)}</span>
                 </span>
                 <span>
-                  Assignee: <span className="text-text">{task.assigneeName ?? 'Unassigned'}</span>
-                </span>
-                <span>
                   Project: <span className="text-text">{task.projectName ?? 'None'}</span>
                 </span>
+              </div>
+
+              <div className="mt-4">
+                <p className="mb-1.5 text-sm text-muted">Assignees</p>
+                {canEdit ? (
+                  <div className="flex flex-col gap-1.5 rounded-card border border-border bg-surface-alt px-3 py-2">
+                    {members
+                      .filter((m) => m.status === 'ACTIVE')
+                      .map((m) => (
+                        <label key={m.userId} className="flex items-center gap-2 text-sm text-text">
+                          <input
+                            type="checkbox"
+                            checked={task.assignees.some((a) => a.userId === m.userId)}
+                            disabled={updatingAssignees}
+                            onChange={() => onToggleAssignee(m.userId)}
+                          />
+                          {m.name}
+                        </label>
+                      ))}
+                  </div>
+                ) : task.assignees.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {task.assignees.map((a) => (
+                      <span key={a.userId} className="flex items-center gap-1.5 rounded-full bg-surface-alt py-1 pl-1 pr-2.5 text-xs text-text">
+                        <span
+                          className="flex h-5 w-5 items-center justify-center rounded-full text-[9px] font-semibold text-white"
+                          style={{ backgroundColor: a.avatarColor }}
+                        >
+                          {a.initials}
+                        </span>
+                        {a.name}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted">Unassigned</p>
+                )}
               </div>
             </div>
 
@@ -476,7 +597,7 @@ export default function TaskDetailPage() {
                   </ul>
                 )}
                 {task.status === 'DONE' && canEdit && !hasPendingReopenRequest && (
-                  <form onSubmit={onRequestReopen} className="flex items-end gap-2">
+                  <form onSubmit={onRequestReopen} className="flex flex-col gap-2 sm:flex-row sm:items-end">
                     <div className="flex-1">
                       <FormField label="Reason to reopen" value={reopenReason} onChange={setReopenReason} />
                     </div>
@@ -491,6 +612,65 @@ export default function TaskDetailPage() {
                 )}
               </div>
             )}
+
+            <div className="mb-6 rounded-card border border-border bg-surface p-6">
+              <h2 className="mb-1 text-base font-semibold text-text">Blockers</h2>
+              <p className="mb-4 text-sm text-muted">
+                {blockerReports.length === 0
+                  ? 'Nothing reported. If something is blocking this task, report it so admins/managers can help.'
+                  : 'Reported blockers on this task:'}
+              </p>
+              {blockerReports.length > 0 && (
+                <ul className="mb-4 flex flex-col gap-2">
+                  {blockerReports.map((b) => (
+                    <li key={b.id} className="rounded-card border border-border p-3 text-sm">
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium text-text">{b.reportedByName}</span>
+                        <span
+                          className={
+                            b.status === 'OPEN' ? 'text-xs font-medium text-red-500' : 'text-xs font-medium text-green-600'
+                          }
+                        >
+                          {b.status}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-text">{b.reason}</p>
+                      {b.status === 'RESOLVED' && (
+                        <p className="mt-1 text-xs text-muted">
+                          Resolved by {b.resolvedByName}
+                          {b.resolutionNote ? `: ${b.resolutionNote}` : ''}
+                        </p>
+                      )}
+                      {b.status === 'OPEN' && canReview && (
+                        <div className="mt-2">
+                          <button
+                            type="button"
+                            onClick={() => onResolveBlocker(b.id)}
+                            className="rounded-card bg-accent px-3 py-1 text-xs font-medium text-white"
+                          >
+                            Resolve
+                          </button>
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {canEdit && (
+                <form onSubmit={onReportBlocker} className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                  <div className="flex-1">
+                    <FormField label="What's blocking this?" value={blockerReason} onChange={setBlockerReason} />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={reportingBlocker}
+                    className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                  >
+                    {reportingBlocker ? 'Reporting…' : 'Report blocker'}
+                  </button>
+                </form>
+              )}
+            </div>
 
             <div className="mb-6 rounded-card border border-border bg-surface p-6">
               <h2 className="mb-1 text-base font-semibold text-text">Subtasks</h2>
@@ -508,6 +688,30 @@ export default function TaskDetailPage() {
                       className="h-4 w-4"
                     />
                     <span className={`flex-1 text-text ${s.done ? 'text-muted line-through' : ''}`}>{s.title}</span>
+                    {canEdit ? (
+                      <select
+                        value={s.assignee?.userId ?? ''}
+                        onChange={(e) => onReassignSubtask(s, e.target.value)}
+                        className="rounded border border-border bg-surface-alt px-2 py-1 text-xs text-text"
+                      >
+                        <option value="">Unassigned</option>
+                        {task.assignees.map((a) => (
+                          <option key={a.userId} value={a.userId}>
+                            {a.name}
+                          </option>
+                        ))}
+                      </select>
+                    ) : s.assignee ? (
+                      <span
+                        title={s.assignee.name}
+                        className="flex h-5 w-5 items-center justify-center rounded-full text-[9px] font-semibold text-white"
+                        style={{ backgroundColor: s.assignee.avatarColor }}
+                      >
+                        {s.assignee.initials}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-faint">Unassigned</span>
+                    )}
                     {canEdit && (
                       <button type="button" onClick={() => onDeleteSubtask(s.id)} className="text-xs text-red-500">
                         Remove
@@ -517,10 +721,25 @@ export default function TaskDetailPage() {
                 ))}
               </ul>
               {canEdit && (
-                <form onSubmit={onAddSubtask} className="flex items-end gap-2">
+                <form onSubmit={onAddSubtask} className="flex flex-col gap-2 sm:flex-row sm:items-end">
                   <div className="flex-1">
                     <FormField label="New subtask" value={newSubtask} onChange={setNewSubtask} />
                   </div>
+                  <label className="flex flex-col gap-1 text-sm text-text">
+                    Owner
+                    <select
+                      value={newSubtaskAssigneeId}
+                      onChange={(e) => setNewSubtaskAssigneeId(e.target.value)}
+                      className="rounded-card border border-border bg-surface-alt px-3 py-2 text-sm text-text"
+                    >
+                      <option value="">Unassigned</option>
+                      {task.assignees.map((a) => (
+                        <option key={a.userId} value={a.userId}>
+                          {a.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                   <button
                     type="submit"
                     disabled={addingSubtask}
@@ -554,7 +773,7 @@ export default function TaskDetailPage() {
                 ))}
               </ul>
               {canEdit && dependencyOptions.length > 0 && (
-                <form onSubmit={onAddDependency} className="flex items-end gap-2">
+                <form onSubmit={onAddDependency} className="flex flex-col gap-2 sm:flex-row sm:items-end">
                   <label className="flex flex-1 flex-col gap-1 text-sm text-text">
                     Add a blocker
                     <select
@@ -611,7 +830,7 @@ export default function TaskDetailPage() {
                   ))}
                 </ul>
               )}
-              <form onSubmit={onUpload} className="flex items-end gap-2">
+              <form onSubmit={onUpload} className="flex flex-col gap-2 sm:flex-row sm:items-end">
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -719,7 +938,7 @@ export default function TaskDetailPage() {
                   ),
                 )}
               </div>
-              <form onSubmit={onPostComment} className="flex items-end gap-2">
+              <form onSubmit={onPostComment} className="flex flex-col gap-2 sm:flex-row sm:items-end">
                 <div className="flex-1">
                   <FormField label="Add a comment" value={newComment} onChange={setNewComment} />
                 </div>

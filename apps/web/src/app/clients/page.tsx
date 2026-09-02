@@ -63,9 +63,9 @@ export default function ClientsPage() {
   const canManage = role === 'ADMIN' || role === 'MANAGER';
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen sm:pl-60">
       <AppNav />
-      <main className="mx-auto max-w-3xl p-8">
+      <main className="mx-auto max-w-3xl px-4 pb-4 pt-16 sm:px-8 sm:pb-8 sm:pt-8">
         <h1 className="mb-6 text-xl font-bold text-text">Clients</h1>
 
         {error && <p className="mb-4 text-sm text-red-500">{error}</p>}

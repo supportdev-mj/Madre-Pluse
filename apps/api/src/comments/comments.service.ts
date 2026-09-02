@@ -46,7 +46,9 @@ export class CommentsService {
       include: { author: true },
     });
 
-    const recipients = new Set([task.assigneeId, task.createdById].filter((id): id is string => !!id && id !== authorId));
+    const recipients = new Set(
+      [...task.assignments.map((a) => a.userId), task.createdById].filter((id) => id !== authorId),
+    );
     for (const recipientId of recipients) {
       await this.notifications.notify({
         orgId,
@@ -83,7 +85,10 @@ export class CommentsService {
   }
 
   private async getTaskOrThrow(taskId: string, orgId: string) {
-    const task = await this.prisma.task.findFirst({ where: { id: taskId, orgId } });
+    const task = await this.prisma.task.findFirst({
+      where: { id: taskId, orgId },
+      include: { assignments: { select: { userId: true } } },
+    });
     if (!task) throw new NotFoundException('Task not found');
     return task;
   }

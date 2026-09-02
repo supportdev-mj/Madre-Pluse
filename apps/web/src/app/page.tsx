@@ -19,9 +19,9 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen sm:pl-60">
       <AppNav />
-      <main className="flex flex-col items-center justify-center gap-6 p-8">
+      <main className="flex flex-col items-center justify-center gap-6 px-8 pb-8 pt-20 sm:pt-8">
         <div className="w-full max-w-sm rounded-card border border-border bg-surface p-6 text-center">
           <div
             className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full text-sm font-semibold text-white"

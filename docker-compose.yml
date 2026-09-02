@@ -51,6 +51,7 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
+      target: dev
     restart: unless-stopped
     env_file:
       - ./apps/api/.env
@@ -77,6 +78,7 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      target: dev
     restart: unless-stopped
     env_file:
       - ./apps/web/.env

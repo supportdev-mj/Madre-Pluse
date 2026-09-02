@@ -31,13 +31,18 @@ interface TaskRecord {
   dueDate: Date | null;
   projectId: string | null;
   project: { name: string } | null;
-  assigneeId: string | null;
-  assignee: { name: string } | null;
+  assignments: { user: { id: string; name: string; initials: string; avatarColor: string } }[];
   createdById: string;
   createdBy: { name: string };
   createdAt: Date;
   updatedAt: Date;
 }
+
+const TASK_INCLUDE = {
+  project: true,
+  createdBy: true,
+  assignments: { include: { user: true } },
+} as const;
 
 @Injectable()
 export class TasksService {
@@ -54,10 +59,10 @@ export class TasksService {
         orgId,
         status: query.status,
         priority: query.priority,
-        assigneeId: query.assigneeId,
         projectId: query.projectId,
+        assignments: query.assigneeId ? { some: { userId: query.assigneeId } } : undefined,
       },
-      include: { project: true, assignee: true, createdBy: true },
+      include: TASK_INCLUDE,
       orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }],
     });
     return tasks.map((t) => this.toSummary(t));
@@ -67,7 +72,7 @@ export class TasksService {
     const orgId = requireOrgId(this.cls);
     const task = await this.prisma.task.findFirst({
       where: { id, orgId },
-      include: { project: true, assignee: true, createdBy: true },
+      include: TASK_INCLUDE,
     });
     if (!task) throw new NotFoundException('Task not found');
     return this.toSummary(task);
@@ -76,9 +81,10 @@ export class TasksService {
   async create(input: CreateTaskInput): Promise<TaskSummary> {
     const orgId = requireOrgId(this.cls);
     const createdById = this.currentUserId();
+    const assigneeIds = [...new Set(input.assigneeIds ?? [])];
 
     if (input.projectId) await this.assertProjectInOrg(input.projectId, orgId);
-    if (input.assigneeId) await this.assertActiveMemberOfOrg(input.assigneeId, orgId);
+    for (const userId of assigneeIds) await this.assertActiveMemberOfOrg(userId, orgId);
 
     const task = await this.prisma.$transaction(async (tx) => {
       const created = await tx.task.create({
@@ -91,10 +97,10 @@ export class TasksService {
           priority: input.priority ?? 'MEDIUM',
           dueDate: input.dueDate ?? null,
           projectId: input.projectId ?? null,
-          assigneeId: input.assigneeId ?? null,
           completedAt: (input.status ?? 'TODO') === 'DONE' ? new Date() : null,
+          assignments: { createMany: { data: assigneeIds.map((userId) => ({ userId })) } },
         },
-        include: { project: true, assignee: true, createdBy: true },
+        include: TASK_INCLUDE,
       });
       await tx.taskActivity.create({
         data: { taskId: created.id, actorId: createdById, type: 'CREATED', message: 'created this task' },
@@ -102,10 +108,11 @@ export class TasksService {
       return created;
     });
 
-    if (task.assigneeId && task.assigneeId !== createdById) {
+    for (const userId of assigneeIds) {
+      if (userId === createdById) continue;
       await this.notifications.notify({
         orgId,
-        userId: task.assigneeId,
+        userId,
         type: 'TASK_ASSIGNED',
         message: `You were assigned to "${task.title}"`,
         taskId: task.id,
@@ -117,19 +124,30 @@ export class TasksService {
 
   async update(id: string, input: UpdateTaskInput): Promise<TaskSummary> {
     const orgId = requireOrgId(this.cls);
-    const existing = await this.prisma.task.findFirst({ where: { id, orgId } });
+    const existing = await this.prisma.task.findFirst({
+      where: { id, orgId },
+      include: { assignments: true },
+    });
     if (!existing) throw new NotFoundException('Task not found');
 
-    assertCanModifyTask(this.cls, existing);
+    assertCanModifyTask(this.cls, { assigneeIds: existing.assignments.map((a) => a.userId), createdById: existing.createdById });
 
     if (input.projectId) await this.assertProjectInOrg(input.projectId, orgId);
-    if (input.assigneeId) await this.assertActiveMemberOfOrg(input.assigneeId, orgId);
+    const nextAssigneeIds = input.assigneeIds !== undefined ? [...new Set(input.assigneeIds)] : undefined;
+    if (nextAssigneeIds) for (const userId of nextAssigneeIds) await this.assertActiveMemberOfOrg(userId, orgId);
 
-    const activities = await this.buildChangeActivities(existing, input);
+    const existingAssigneeIds = existing.assignments.map((a) => a.userId);
+    const activities = await this.buildChangeActivities(existing, existingAssigneeIds, input, nextAssigneeIds);
     const actorId = this.currentUserId();
     const completedAt = this.computeCompletedAt(existing.status, input.status);
 
     const task = await this.prisma.$transaction(async (tx) => {
+      if (nextAssigneeIds) {
+        await tx.taskAssignment.deleteMany({ where: { taskId: id } });
+        if (nextAssigneeIds.length > 0) {
+          await tx.taskAssignment.createMany({ data: nextAssigneeIds.map((userId) => ({ taskId: id, userId })) });
+        }
+      }
       const updated = await tx.task.update({
         where: { id },
         data: {
@@ -139,10 +157,9 @@ export class TasksService {
           priority: input.priority,
           dueDate: input.dueDate,
           projectId: input.projectId,
-          assigneeId: input.assigneeId,
           completedAt,
         },
-        include: { project: true, assignee: true, createdBy: true },
+        include: TASK_INCLUDE,
       });
       if (activities.length > 0) {
         await tx.taskActivity.createMany({
@@ -152,15 +169,18 @@ export class TasksService {
       return updated;
     });
 
-    const reassigned = input.assigneeId !== undefined && input.assigneeId !== existing.assigneeId;
-    if (reassigned && input.assigneeId && input.assigneeId !== actorId) {
-      await this.notifications.notify({
-        orgId,
-        userId: input.assigneeId,
-        type: 'TASK_ASSIGNED',
-        message: `You were assigned to "${task.title}"`,
-        taskId: task.id,
-      });
+    if (nextAssigneeIds) {
+      const newlyAdded = nextAssigneeIds.filter((userId) => !existingAssigneeIds.includes(userId));
+      for (const userId of newlyAdded) {
+        if (userId === actorId) continue;
+        await this.notifications.notify({
+          orgId,
+          userId,
+          type: 'TASK_ASSIGNED',
+          message: `You were assigned to "${task.title}"`,
+          taskId: task.id,
+        });
+      }
     }
 
     return this.toSummary(task);
@@ -194,8 +214,10 @@ export class TasksService {
   }
 
   private async buildChangeActivities(
-    existing: { status: string; priority: string; assigneeId: string | null; dueDate: Date | null },
+    existing: { status: string; priority: string; dueDate: Date | null },
+    existingAssigneeIds: string[],
     input: UpdateTaskInput,
+    nextAssigneeIds: string[] | undefined,
   ): Promise<PendingActivity[]> {
     const activities: PendingActivity[] = [];
 
@@ -205,15 +227,19 @@ export class TasksService {
     if (input.priority !== undefined && input.priority !== existing.priority) {
       activities.push({ type: 'PRIORITY_CHANGED', message: `changed priority from ${existing.priority} to ${input.priority}` });
     }
-    if (input.assigneeId !== undefined && input.assigneeId !== existing.assigneeId) {
-      const [oldUser, newUser] = await Promise.all([
-        existing.assigneeId ? this.prisma.user.findUnique({ where: { id: existing.assigneeId }, select: { name: true } }) : null,
-        input.assigneeId ? this.prisma.user.findUnique({ where: { id: input.assigneeId }, select: { name: true } }) : null,
-      ]);
-      activities.push({
-        type: 'ASSIGNEE_CHANGED',
-        message: `reassigned from ${oldUser?.name ?? 'Unassigned'} to ${newUser?.name ?? 'Unassigned'}`,
-      });
+    if (nextAssigneeIds !== undefined) {
+      const added = nextAssigneeIds.filter((id) => !existingAssigneeIds.includes(id));
+      const removed = existingAssigneeIds.filter((id) => !nextAssigneeIds.includes(id));
+      if (added.length > 0 || removed.length > 0) {
+        const [addedUsers, removedUsers] = await Promise.all([
+          added.length > 0 ? this.prisma.user.findMany({ where: { id: { in: added } }, select: { name: true } }) : [],
+          removed.length > 0 ? this.prisma.user.findMany({ where: { id: { in: removed } }, select: { name: true } }) : [],
+        ]);
+        const parts: string[] = [];
+        if (addedUsers.length > 0) parts.push(`added ${addedUsers.map((u) => u.name).join(', ')}`);
+        if (removedUsers.length > 0) parts.push(`removed ${removedUsers.map((u) => u.name).join(', ')}`);
+        activities.push({ type: 'ASSIGNEE_CHANGED', message: `${parts.join('; ')} as assignee(s)` });
+      }
     }
     if (input.dueDate !== undefined && (input.dueDate?.getTime() ?? null) !== (existing.dueDate?.getTime() ?? null)) {
       const to = input.dueDate ? input.dueDate.toISOString().slice(0, 10) : 'no due date';
@@ -257,8 +283,12 @@ export class TasksService {
       dueDate: t.dueDate ? t.dueDate.toISOString() : null,
       projectId: t.projectId,
       projectName: t.project?.name ?? null,
-      assigneeId: t.assigneeId,
-      assigneeName: t.assignee?.name ?? null,
+      assignees: t.assignments.map((a) => ({
+        userId: a.user.id,
+        name: a.user.name,
+        initials: a.user.initials,
+        avatarColor: a.user.avatarColor,
+      })),
       createdById: t.createdById,
       createdByName: t.createdBy.name,
       createdAt: t.createdAt.toISOString(),

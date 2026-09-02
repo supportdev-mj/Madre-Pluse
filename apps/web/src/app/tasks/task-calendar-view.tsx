@@ -100,53 +100,55 @@ export function TaskCalendarView({ tasks }: TaskCalendarViewProps) {
         </button>
       </div>
 
-      <div className="grid grid-cols-7 overflow-hidden rounded-card border border-border">
-        {WEEKDAY_LABELS.map((label) => (
-          <div
-            key={label}
-            className="border-b border-border bg-surface-alt px-2 py-1 text-center text-xs font-medium text-muted"
-          >
-            {label}
-          </div>
-        ))}
-        {gridDays.map((day) => {
-          const key = dateKey(day.getFullYear(), day.getMonth(), day.getDate());
-          const dayTasks = tasksByDay.get(key) ?? [];
-          const inCurrentMonth = day.getMonth() === month;
-          const isToday = key === todayKey;
-
-          return (
+      <div className="overflow-x-auto">
+        <div className="grid min-w-[560px] grid-cols-7 overflow-hidden rounded-card border border-border">
+          {WEEKDAY_LABELS.map((label) => (
             <div
-              key={key}
-              data-testid={`calendar-day-${key}`}
-              className={`min-h-[90px] border-b border-r border-border p-1 last:border-r-0 ${inCurrentMonth ? 'bg-surface' : 'bg-canvas'}`}
+              key={label}
+              className="border-b border-border bg-surface-alt px-2 py-1 text-center text-xs font-medium text-muted"
             >
-              <div
-                className={
-                  isToday
-                    ? 'mb-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-accent text-xs text-white'
-                    : `mb-1 text-xs ${inCurrentMonth ? 'text-text' : 'text-faint'}`
-                }
-              >
-                {day.getDate()}
-              </div>
-              <div className="flex flex-col gap-0.5">
-                {dayTasks.slice(0, 3).map((task) => (
-                  <div
-                    key={task.id}
-                    data-testid={`calendar-task-${task.id}`}
-                    title={task.title}
-                    className="flex items-center gap-1 truncate rounded bg-surface-alt px-1 py-0.5 text-xs text-text"
-                  >
-                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${PRIORITY_DOT[task.priority] ?? 'bg-muted'}`} />
-                    <span className="truncate">{task.title}</span>
-                  </div>
-                ))}
-                {dayTasks.length > 3 && <div className="text-xs text-muted">+{dayTasks.length - 3} more</div>}
-              </div>
+              {label}
             </div>
-          );
-        })}
+          ))}
+          {gridDays.map((day) => {
+            const key = dateKey(day.getFullYear(), day.getMonth(), day.getDate());
+            const dayTasks = tasksByDay.get(key) ?? [];
+            const inCurrentMonth = day.getMonth() === month;
+            const isToday = key === todayKey;
+
+            return (
+              <div
+                key={key}
+                data-testid={`calendar-day-${key}`}
+                className={`min-h-[90px] border-b border-r border-border p-1 last:border-r-0 ${inCurrentMonth ? 'bg-surface' : 'bg-canvas'}`}
+              >
+                <div
+                  className={
+                    isToday
+                      ? 'mb-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-accent text-xs text-white'
+                      : `mb-1 text-xs ${inCurrentMonth ? 'text-text' : 'text-faint'}`
+                  }
+                >
+                  {day.getDate()}
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  {dayTasks.slice(0, 3).map((task) => (
+                    <div
+                      key={task.id}
+                      data-testid={`calendar-task-${task.id}`}
+                      title={task.title}
+                      className="flex items-center gap-1 truncate rounded bg-surface-alt px-1 py-0.5 text-xs text-text"
+                    >
+                      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${PRIORITY_DOT[task.priority] ?? 'bg-muted'}`} />
+                      <span className="truncate">{task.title}</span>
+                    </div>
+                  ))}
+                  {dayTasks.length > 3 && <div className="text-xs text-muted">+{dayTasks.length - 3} more</div>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
