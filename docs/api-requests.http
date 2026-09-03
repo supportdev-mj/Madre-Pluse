@@ -92,6 +92,23 @@ Authorization: Bearer {{login.response.body.accessToken}}
 DELETE {{baseUrl}}/integrations/google
 Authorization: Bearer {{login.response.body.accessToken}}
 
+### Platform AI provider settings (Slice 20) — superadmin only, platform-wide (not per-org).
+### {{login}} must belong to a superadmin account — see Slice 18's block above for how to become one.
+
+### Check whether an LLM API key is configured (never returns the key itself)
+GET {{baseUrl}}/admin/llm-settings
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### Set or replace the platform's LLM API key
+PUT {{baseUrl}}/admin/llm-settings
+Authorization: Bearer {{login.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "apiKey": "sk-ant-your-real-key-here",
+  "model": "claude-sonnet-5"
+}
+
 ### List members (Slice 2)
 GET {{baseUrl}}/members
 Authorization: Bearer {{login.response.body.accessToken}}

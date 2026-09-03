@@ -513,3 +513,17 @@ export interface GoogleIntegrationStatus {
   connected: boolean;
   googleEmail: string | null;
 }
+
+// --- Slice 20: platform-wide LLM settings (step 2 — meeting-note summarization) ---
+
+export const updateLlmSettingsSchema = z.object({
+  apiKey: z.string().trim().min(1, 'API key is required'),
+  model: z.string().trim().min(1).optional(),
+});
+export type UpdateLlmSettingsInput = z.infer<typeof updateLlmSettingsSchema>;
+
+export interface LlmSettingsStatus {
+  configured: boolean;
+  model: string | null;
+  updatedAt: string | null;
+}

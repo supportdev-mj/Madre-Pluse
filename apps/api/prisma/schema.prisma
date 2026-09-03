@@ -10,6 +10,7 @@
 // Slice 16: BlockerReport — a trackable "I'm blocked" flag, notifies ADMIN/MANAGER, resolvable.
 // Slice 19: GoogleIntegration — per-org Google Workspace OAuth connection (Meet transcripts, step 1
 // of meeting-notes-to-tasks; MeetingNote/TaskDraft models land in a later slice once this is wired up).
+// Slice 20: LlmSettings — one platform-wide LLM API key (superadmin-managed), step 2 of the same pipeline.
 // Slice 18: User.isSuperAdmin (platform-wide, independent of org Role) + Organization.plan/status —
 // a superadmin (product owner) manages every tenant's plan label and active/suspended state.
 // Deliberately NOT wired to real billing/payments (still Phase 3) and NOT self-service — see DEVELOPER.md.
@@ -130,6 +131,7 @@ model User {
   blockerReportsMade    BlockerReport[]     @relation("BlockerReporter")
   blockerReportsHandled BlockerReport[]     @relation("BlockerResolver")
   googleIntegrations    GoogleIntegration[] @relation("GoogleIntegrationConnector")
+  llmSettingsUpdates    LlmSettings[]
 
   @@map("users")
 }
@@ -443,4 +445,22 @@ model GoogleIntegration {
   connectedBy User         @relation("GoogleIntegrationConnector", fields: [connectedById], references: [id])
 
   @@map("google_integrations")
+}
+
+// Slice 20: one platform-wide LLM API key (a single fixed-id row acts as a singleton), not
+// per-org — meeting-note summarization is a shared cost the platform bears, the same category
+// as SMTP_HOST being one server-wide setting today, not something each tenant configures. Managed
+// by a superadmin from /admin, not a tenant's own ADMIN. apiKeyEncrypted uses the same
+// AES-256-GCM/TOKEN_ENCRYPTION_KEY approach as GoogleIntegration's refresh token.
+model LlmSettings {
+  id              String   @id @default("default")
+  apiKeyEncrypted String
+  model           String   @default("claude-sonnet-5")
+  updatedById     String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  updatedBy User @relation(fields: [updatedById], references: [id])
+
+  @@map("llm_settings")
 }
