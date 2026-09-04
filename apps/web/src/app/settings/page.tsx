@@ -6,6 +6,7 @@ import { AppNav } from '../../components/app-nav';
 import { FormField } from '../../components/form-field';
 import { apiFetch } from '../../lib/api-client';
 import { useAuth } from '../../lib/auth-context';
+import { useTheme } from '../../lib/theme-context';
 import { useRequireAuth } from '../../lib/use-require-auth';
 
 function formatDate(iso: string): string {
@@ -15,6 +16,7 @@ function formatDate(iso: string): string {
 export default function SettingsPage() {
   const { status, role } = useRequireAuth();
   const { setOrgName } = useAuth();
+  const { theme, setTheme } = useTheme();
   const [org, setOrg] = useState<OrganizationSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -121,7 +123,32 @@ export default function SettingsPage() {
     <div className="min-h-screen sm:pl-60">
       <AppNav />
       <main className="mx-auto max-w-2xl px-4 pb-4 pt-16 sm:px-8 sm:pb-8 sm:pt-8">
-        <h1 className="mb-6 text-xl font-bold text-text">Organization settings</h1>
+        <h1 className="mb-6 text-xl font-bold text-text">Settings</h1>
+
+        <div className="mb-6 rounded-card border border-border bg-surface p-6">
+          <h2 className="mb-1 text-base font-semibold text-text">Appearance</h2>
+          <p className="mb-4 text-sm text-muted">Choose how Madre Pulse looks on this device.</p>
+          <div role="radiogroup" aria-label="Theme" className="inline-flex rounded-card border border-border bg-surface-alt p-1">
+            {(['light', 'dark'] as const).map((option) => (
+              <button
+                key={option}
+                type="button"
+                role="radio"
+                aria-checked={theme === option}
+                onClick={() => setTheme(option)}
+                className={
+                  theme === option
+                    ? 'rounded-card bg-accent px-4 py-1.5 text-sm font-medium capitalize text-white'
+                    : 'rounded-card px-4 py-1.5 text-sm font-medium capitalize text-muted hover:text-text'
+                }
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <h2 className="mb-4 text-base font-semibold text-text">Organization</h2>
 
         {!canView ? (
           <p className="text-sm text-muted">Only admins can view organization settings.</p>
