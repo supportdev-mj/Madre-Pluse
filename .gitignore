@@ -15,6 +15,7 @@ out/
 .env.*.local
 .env.prod
 .env.production
+.env.cloud
 !.env.example
 
 # logs

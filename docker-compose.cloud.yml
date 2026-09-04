@@ -1,0 +1,103 @@
+# Single-file cloud deployment. Clone the repo on a server, fill in one env file, run one command
+# — no dev/prod target juggling, no separate override files, no reverse proxy/TLS setup required
+# to get running. Add a domain + HTTPS later as a separate, optional step once you want one; this
+# is deliberately just "pull the code and run it."
+#
+# Usage:
+#   cp .env.cloud.example .env.cloud
+#   # edit .env.cloud with real values (see comments in that file)
+#   docker compose -f docker-compose.cloud.yml --env-file .env.cloud up -d --build
+#   docker compose -f docker-compose.cloud.yml --env-file .env.cloud exec api npx prisma migrate deploy
+#
+# To update later (after a `git pull`):
+#   docker compose -f docker-compose.cloud.yml --env-file .env.cloud up -d --build
+#   docker compose -f docker-compose.cloud.yml --env-file .env.cloud exec api npx prisma migrate deploy   # only if schema.prisma changed
+#
+# `name:` is set explicitly so the project name (and therefore volume names) stays predictable
+# regardless of what the checkout directory happens to be called or how it's cased.
+name: madre_pluse_cloud
+
+services:
+  postgres:
+    image: postgres:16.4-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: prod
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379
+      CORS_ORIGIN: http://${SERVER_IP}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      JWT_ACCESS_TTL: 15m
+      JWT_REFRESH_TTL: 30d
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY}
+      STORAGE_DRIVER: local
+      S3_ENDPOINT: ${S3_ENDPOINT}
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT}
+      S3_BUCKET: ${S3_BUCKET}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      AWS_REGION: us-east-1
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      SMTP_FROM: ${SMTP_FROM}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GOOGLE_REDIRECT_URI: http://${SERVER_IP}:4000/integrations/google/callback
+    ports:
+      - '4000:4000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      target: prod
+      args:
+        NEXT_PUBLIC_API_URL: http://${SERVER_IP}:4000
+        NEXT_PUBLIC_SOCKET_URL: http://${SERVER_IP}:4000
+    restart: unless-stopped
+    ports:
+      - '80:3000'
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  redisdata:
