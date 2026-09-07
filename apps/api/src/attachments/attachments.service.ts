@@ -4,6 +4,7 @@ import { ClsService } from 'nestjs-cls';
 import type { AttachmentSummary } from '@madre-pulse/shared';
 import type { AppClsStore } from '../common/tenant/cls-store.type';
 import { requireOrgId } from '../common/tenant/require-org-id';
+import { getTaskVisibleUserIds, taskVisibilityWhere } from '../common/tenant/task-visibility';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 
@@ -95,7 +96,10 @@ export class AttachmentsService {
   }
 
   private async getTaskOrThrow(taskId: string, orgId: string) {
-    const task = await this.prisma.task.findFirst({ where: { id: taskId, orgId } });
+    const visibleUserIds = await getTaskVisibleUserIds(this.prisma, this.cls, orgId);
+    const task = await this.prisma.task.findFirst({
+      where: { id: taskId, orgId, ...taskVisibilityWhere(visibleUserIds) },
+    });
     if (!task) throw new NotFoundException('Task not found');
     return task;
   }

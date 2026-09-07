@@ -14,9 +14,13 @@ interface MembershipWithUser {
   id: string;
   role: string;
   status: string;
+  managerId: string | null;
   createdAt: Date;
   user: { id: string; name: string; email: string; initials: string; avatarColor: string };
+  manager?: { user: { name: string } } | null;
 }
+
+const MEMBER_INCLUDE = { user: true, manager: { include: { user: true } } } as const;
 
 @Injectable()
 export class MembersService {
@@ -29,7 +33,7 @@ export class MembersService {
     const orgId = requireOrgId(this.cls);
     const memberships = await this.prisma.membership.findMany({
       where: { orgId },
-      include: { user: true },
+      include: MEMBER_INCLUDE,
       orderBy: { createdAt: 'asc' },
     });
     return memberships.map((m) => this.toSummary(m));
@@ -51,7 +55,7 @@ export class MembersService {
       const membership = await this.prisma.membership.create({
         data: { userId: existingUser.id, orgId, role: input.role, status: 'ACTIVE' },
       });
-      return { member: this.toSummary({ ...membership, user: existingUser }) };
+      return { member: this.toSummary({ ...membership, user: existingUser, manager: null }) };
     }
 
     const temporaryPassword = generateTempPassword();
@@ -69,7 +73,7 @@ export class MembersService {
       return { user, membership };
     });
 
-    return { member: this.toSummary({ ...membership, user }), temporaryPassword };
+    return { member: this.toSummary({ ...membership, user, manager: null }), temporaryPassword };
   }
 
   async update(membershipId: string, input: UpdateMemberInput): Promise<MemberSummary> {
@@ -93,12 +97,75 @@ export class MembersService {
       }
     }
 
-    const updated = await this.prisma.membership.update({
-      where: { id: membershipId },
-      data: { role: nextRole, status: nextStatus },
-      include: { user: true },
+    if (input.email) {
+      const email = input.email.toLowerCase();
+      const existing = await this.prisma.user.findUnique({ where: { email } });
+      if (existing && existing.id !== membership.userId) {
+        throw new ConflictException('This email is already in use');
+      }
+    }
+
+    if (input.managerId !== undefined) {
+      await this.assertValidManager(membershipId, input.managerId, orgId);
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      if (input.name !== undefined || input.email !== undefined) {
+        await tx.user.update({
+          where: { id: membership.userId },
+          data: {
+            name: input.name,
+            email: input.email?.toLowerCase(),
+            initials: input.name ? deriveInitials(input.name) : undefined,
+          },
+        });
+      }
+      return tx.membership.update({
+        where: { id: membershipId },
+        data: { role: nextRole, status: nextStatus, managerId: input.managerId },
+        include: MEMBER_INCLUDE,
+      });
     });
     return this.toSummary(updated);
+  }
+
+  /** ADMIN-triggered reset: generates a new temporary password (shown once), forces all of that
+   * user's other sessions to re-authenticate — same treatment as a self-service password change. */
+  async resetPassword(membershipId: string): Promise<{ member: MemberSummary; temporaryPassword: string }> {
+    const orgId = requireOrgId(this.cls);
+    const membership = await this.prisma.membership.findFirst({
+      where: { id: membershipId, orgId },
+      include: MEMBER_INCLUDE,
+    });
+    if (!membership) throw new NotFoundException('Member not found');
+
+    const temporaryPassword = generateTempPassword();
+    const passwordHash = await bcrypt.hash(temporaryPassword, BCRYPT_ROUNDS);
+
+    await this.prisma.$transaction([
+      this.prisma.user.update({ where: { id: membership.userId }, data: { passwordHash } }),
+      this.prisma.refreshToken.updateMany({
+        where: { userId: membership.userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      }),
+    ]);
+
+    return { member: this.toSummary(membership), temporaryPassword };
+  }
+
+  private async assertValidManager(membershipId: string, managerId: string | null, orgId: string): Promise<void> {
+    if (managerId === null) return;
+    if (managerId === membershipId) {
+      throw new BadRequestException('A member cannot be their own manager');
+    }
+    const manager = await this.prisma.membership.findFirst({ where: { id: managerId, orgId } });
+    if (!manager) throw new BadRequestException('Manager not found in this organization');
+    if (manager.role !== 'ADMIN' && manager.role !== 'MANAGER') {
+      throw new BadRequestException('Manager must have the Manager or Admin role');
+    }
+    if (manager.managerId === membershipId) {
+      throw new BadRequestException('This would create a circular reporting relationship');
+    }
   }
 
   private toSummary(m: MembershipWithUser): MemberSummary {
@@ -111,6 +178,8 @@ export class MembersService {
       avatarColor: m.user.avatarColor,
       role: m.role as RoleName,
       status: m.status as MembershipStatusName,
+      managerId: m.managerId,
+      managerName: m.manager?.user.name ?? null,
       createdAt: m.createdAt.toISOString(),
     };
   }

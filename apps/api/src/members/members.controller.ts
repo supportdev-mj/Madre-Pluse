@@ -29,4 +29,11 @@ export class MembersController {
   update(@Param('id') id: string, @Body(new ZodValidationPipe(updateMemberSchema)) dto: UpdateMemberInput) {
     return this.membersService.update(id, dto);
   }
+
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN')
+  @Post(':id/reset-password')
+  resetPassword(@Param('id') id: string) {
+    return this.membersService.resetPassword(id);
+  }
 }

@@ -14,6 +14,8 @@
 // Slice 18: User.isSuperAdmin (platform-wide, independent of org Role) + Organization.plan/status —
 // a superadmin (product owner) manages every tenant's plan label and active/suspended state.
 // Deliberately NOT wired to real billing/payments (still Phase 3) and NOT self-service — see DEVELOPER.md.
+// Slice 21: OrgAiSettings / MomUpload / MomTaskCandidate — per-org "upload a MoM PDF, AI extracts
+// action items into a review queue, accept/edit/reject before it becomes a real Task" pipeline.
 
 generator client {
   provider      = "prisma-client-js"
@@ -87,6 +89,12 @@ enum OrganizationStatus {
   SUSPENDED
 }
 
+enum MomCandidateStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
 model Organization {
   id        String             @id @default(cuid())
   name      String
@@ -101,6 +109,9 @@ model Organization {
   tasks             Task[]
   notifications     Notification[]
   googleIntegration GoogleIntegration?
+  orgAiSettings     OrgAiSettings?
+  momUploads        MomUpload[]
+  momTaskCandidates MomTaskCandidate[]
 
   @@map("organizations")
 }
@@ -116,34 +127,38 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  memberships           Membership[]
-  refreshTokens         RefreshToken[]
-  taskAssignments       TaskAssignment[]
-  subtaskAssignments    Subtask[]       @relation("SubtaskAssignee")
-  createdTasks          Task[]          @relation("TaskCreator")
-  comments              Comment[]
-  attachments           Attachment[]
-  taskActivities        TaskActivity[]
-  timeEntries           TimeEntry[]
-  notifications         Notification[]
-  reopenRequestsMade    ReopenRequest[]     @relation("ReopenRequester")
-  reopenRequestsHandled ReopenRequest[]     @relation("ReopenReviewer")
-  blockerReportsMade    BlockerReport[]     @relation("BlockerReporter")
-  blockerReportsHandled BlockerReport[]     @relation("BlockerResolver")
-  googleIntegrations    GoogleIntegration[] @relation("GoogleIntegrationConnector")
-  llmSettingsUpdates    LlmSettings[]
+  memberships            Membership[]
+  refreshTokens          RefreshToken[]
+  taskAssignments        TaskAssignment[]
+  subtaskAssignments     Subtask[]           @relation("SubtaskAssignee")
+  createdTasks           Task[]              @relation("TaskCreator")
+  comments               Comment[]
+  attachments            Attachment[]
+  taskActivities         TaskActivity[]
+  timeEntries            TimeEntry[]
+  notifications          Notification[]
+  reopenRequestsMade     ReopenRequest[]     @relation("ReopenRequester")
+  reopenRequestsHandled  ReopenRequest[]     @relation("ReopenReviewer")
+  blockerReportsMade     BlockerReport[]     @relation("BlockerReporter")
+  blockerReportsHandled  BlockerReport[]     @relation("BlockerResolver")
+  googleIntegrations     GoogleIntegration[] @relation("GoogleIntegrationConnector")
+  llmSettingsUpdates     LlmSettings[]
+  orgAiSettingsUpdates   OrgAiSettings[]
+  momUploads             MomUpload[]         @relation("MomUploader")
+  momCandidatesSuggested MomTaskCandidate[]  @relation("MomSuggestedAssignee")
+  momCandidatesReviewed  MomTaskCandidate[]  @relation("MomReviewer")
 
   @@map("users")
 }
 
 model RefreshToken {
-  id            String    @id @default(cuid())
-  userId        String
-  tokenHash     String    @unique
-  expiresAt     DateTime
-  revokedAt     DateTime?
-  replacedById  String?
-  createdAt     DateTime  @default(now())
+  id           String    @id @default(cuid())
+  userId       String
+  tokenHash    String    @unique
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  replacedById String?
+  createdAt    DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -151,20 +166,28 @@ model RefreshToken {
   @@map("refresh_tokens")
 }
 
+// managerId is a self-reference to another Membership in the same org (not to a User directly)
+// since "who manages whom" is an org-scoped fact, same as role/status — a person could in theory
+// belong to multiple orgs with a different manager in each. Used to scope MANAGER-role visibility
+// (tasks, dashboard, reports) to "themself + their direct reports" — see task-visibility.ts.
 model Membership {
-  id     String           @id @default(cuid())
-  userId String
-  orgId  String
-  role   Role             @default(USER)
-  status MembershipStatus @default(ACTIVE)
+  id        String           @id @default(cuid())
+  userId    String
+  orgId     String
+  role      Role             @default(USER)
+  status    MembershipStatus @default(ACTIVE)
+  managerId String?
 
   createdAt DateTime @default(now())
 
-  user User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org           Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  manager       Membership?  @relation("MembershipManager", fields: [managerId], references: [id], onDelete: SetNull)
+  directReports Membership[] @relation("MembershipManager")
 
   @@unique([userId, orgId])
   @@index([orgId])
+  @@index([managerId])
   @@map("memberships")
 }
 
@@ -178,6 +201,7 @@ model Client {
 
   org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   projects Project[]
+  tasks    Task[]
 
   @@unique([orgId, name])
   @@index([orgId])
@@ -208,6 +232,7 @@ model Task {
   id          String       @id @default(cuid())
   orgId       String
   projectId   String?
+  clientId    String?
   createdById String
   title       String
   description String?
@@ -220,12 +245,13 @@ model Task {
 
   org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   project   Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  client    Client?      @relation(fields: [clientId], references: [id], onDelete: SetNull)
   createdBy User         @relation("TaskCreator", fields: [createdById], references: [id])
 
   assignments    TaskAssignment[]
   subtasks       Subtask[]
-  dependencies   TaskDependency[] @relation("DependentTask")
-  dependents     TaskDependency[] @relation("BlockingTask")
+  dependencies   TaskDependency[]  @relation("DependentTask")
+  dependents     TaskDependency[]  @relation("BlockingTask")
   comments       Comment[]
   attachments    Attachment[]
   activities     TaskActivity[]
@@ -233,10 +259,12 @@ model Task {
   notifications  Notification[]
   reopenRequests ReopenRequest[]
   blockerReports BlockerReport[]
+  momCandidate   MomTaskCandidate?
 
   @@index([orgId])
   @@index([orgId, status])
   @@index([projectId])
+  @@index([clientId])
   @@map("tasks")
 }
 
@@ -463,4 +491,77 @@ model LlmSettings {
   updatedBy User @relation(fields: [updatedById], references: [id])
 
   @@map("llm_settings")
+}
+
+// Slice 21: MoM (Minutes of Meeting) PDF upload → AI-extracted task queue.
+// Unlike LlmSettings above, this key is per-org (each tenant brings their own Anthropic key and
+// bears its own cost), managed by that org's own ADMIN from Settings, not a superadmin.
+// Same AES-256-GCM/TOKEN_ENCRYPTION_KEY encryption-at-rest approach as the other secrets here.
+model OrgAiSettings {
+  id              String   @id @default(cuid())
+  orgId           String   @unique
+  apiKeyEncrypted String
+  model           String   @default("claude-sonnet-5")
+  updatedById     String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  updatedBy User         @relation(fields: [updatedById], references: [id])
+
+  @@map("org_ai_settings")
+}
+
+// One row per uploaded MoM PDF. The extraction result (one row per action item found) lives in
+// MomTaskCandidate below — kept separate so a single upload can produce many review-queue items.
+model MomUpload {
+  id           String   @id @default(cuid())
+  orgId        String
+  uploadedById String
+  fileName     String
+  storageKey   String
+  sizeBytes    Int
+  itemsFound   Int
+  itemsNew     Int
+  createdAt    DateTime @default(now())
+
+  org        Organization       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  uploadedBy User               @relation("MomUploader", fields: [uploadedById], references: [id])
+  candidates MomTaskCandidate[]
+
+  @@index([orgId])
+  @@map("mom_uploads")
+}
+
+// A single AI-extracted action item awaiting human review. Accepting one creates a real Task
+// (via TasksService, so it gets the same activity log/notifications as a manually-created task)
+// and links back here via createdTaskId; rejecting just marks it REJECTED for audit. Only PENDING
+// candidates are editable — this queue exists for MoM-sourced tasks only, not general task intake.
+model MomTaskCandidate {
+  id                    String             @id @default(cuid())
+  orgId                 String
+  momUploadId           String
+  title                 String
+  description           String
+  suggestedAssigneeName String?
+  suggestedAssigneeId   String?
+  dueDate               DateTime?
+  priority              TaskPriority       @default(MEDIUM)
+  context               String?
+  status                MomCandidateStatus @default(PENDING)
+  createdTaskId         String?            @unique
+  reviewedById          String?
+  reviewedAt            DateTime?
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  org               Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  momUpload         MomUpload    @relation(fields: [momUploadId], references: [id], onDelete: Cascade)
+  suggestedAssignee User?        @relation("MomSuggestedAssignee", fields: [suggestedAssigneeId], references: [id], onDelete: SetNull)
+  createdTask       Task?        @relation(fields: [createdTaskId], references: [id], onDelete: SetNull)
+  reviewedBy        User?        @relation("MomReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([orgId, status])
+  @@index([momUploadId])
+  @@map("mom_task_candidates")
 }

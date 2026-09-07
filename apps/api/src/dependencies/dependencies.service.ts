@@ -4,6 +4,7 @@ import { ClsService } from 'nestjs-cls';
 import type { CreateDependencyInput, DependencySummary, TaskStatusName } from '@madre-pulse/shared';
 import type { AppClsStore } from '../common/tenant/cls-store.type';
 import { requireOrgId } from '../common/tenant/require-org-id';
+import { getTaskVisibleUserIds, taskVisibilityWhere } from '../common/tenant/task-visibility';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertCanModifyTask } from '../tasks/task-permissions';
 
@@ -41,7 +42,10 @@ export class DependenciesService {
       throw new BadRequestException('A task cannot depend on itself');
     }
 
-    const target = await this.prisma.task.findFirst({ where: { id: input.dependsOnId, orgId } });
+    const visibleUserIds = await getTaskVisibleUserIds(this.prisma, this.cls, orgId);
+    const target = await this.prisma.task.findFirst({
+      where: { id: input.dependsOnId, orgId, ...taskVisibilityWhere(visibleUserIds) },
+    });
     if (!target) throw new BadRequestException('Target task not found in this organization');
 
     if (await this.wouldCreateCycle(taskId, input.dependsOnId)) {
@@ -97,8 +101,9 @@ export class DependenciesService {
   }
 
   private async getTaskOrThrow(taskId: string, orgId: string) {
+    const visibleUserIds = await getTaskVisibleUserIds(this.prisma, this.cls, orgId);
     const task = await this.prisma.task.findFirst({
-      where: { id: taskId, orgId },
+      where: { id: taskId, orgId, ...taskVisibilityWhere(visibleUserIds) },
       include: { assignments: { select: { userId: true } } },
     });
     if (!task) throw new NotFoundException('Task not found');

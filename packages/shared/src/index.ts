@@ -45,6 +45,12 @@ export interface AuthSession {
   accessToken: string;
 }
 
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1, 'Current password is required'),
+  newPassword: z.string().min(8, 'New password must be at least 8 characters').max(72),
+});
+export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
+
 // --- Slice 2: Members, Clients, Projects ---
 
 export const MEMBERSHIP_STATUSES = ['ACTIVE', 'DISABLED'] as const;
@@ -62,12 +68,13 @@ export type CreateMemberInput = z.infer<typeof createMemberSchema>;
 
 export const updateMemberSchema = z
   .object({
+    name: z.string().trim().min(2, 'Name must be at least 2 characters').max(80).optional(),
+    email: z.string().trim().toLowerCase().email('Enter a valid email address').optional(),
     role: z.enum(ROLES).optional(),
     status: z.enum(MEMBERSHIP_STATUSES).optional(),
+    managerId: z.string().cuid().nullable().optional(),
   })
-  .refine((data) => data.role !== undefined || data.status !== undefined, {
-    message: 'Provide at least one of role or status',
-  });
+  .refine((data) => Object.keys(data).length > 0, { message: 'Provide at least one field to update' });
 export type UpdateMemberInput = z.infer<typeof updateMemberSchema>;
 
 export interface MemberSummary {
@@ -78,6 +85,8 @@ export interface MemberSummary {
   initials: string;
   avatarColor: string;
   role: RoleName;
+  managerId: string | null;
+  managerName: string | null;
   status: MembershipStatusName;
   createdAt: string;
 }
@@ -144,24 +153,26 @@ export type TaskPriorityName = (typeof TASK_PRIORITIES)[number];
 
 export const createTaskSchema = z.object({
   title: z.string().trim().min(1, 'Title is required').max(200),
-  description: z.string().trim().max(5000).optional(),
+  description: z.string().trim().min(1, 'Description is required').max(5000),
   status: z.enum(TASK_STATUSES).optional(),
   priority: z.enum(TASK_PRIORITIES).optional(),
-  dueDate: z.coerce.date().optional(),
+  dueDate: z.coerce.date(),
   projectId: z.string().cuid().optional(),
-  assigneeIds: z.array(z.string().cuid()).optional(),
+  clientId: z.string().cuid().optional(),
+  assigneeIds: z.array(z.string().cuid()).min(1, 'At least one assignee is required'),
 });
 export type CreateTaskInput = z.infer<typeof createTaskSchema>;
 
 export const updateTaskSchema = z
   .object({
     title: z.string().trim().min(1, 'Title is required').max(200).optional(),
-    description: z.string().trim().max(5000).nullable().optional(),
+    description: z.string().trim().min(1, 'Description is required').max(5000).optional(),
     status: z.enum(TASK_STATUSES).optional(),
     priority: z.enum(TASK_PRIORITIES).optional(),
     dueDate: z.coerce.date().nullable().optional(),
     projectId: z.string().cuid().nullable().optional(),
-    assigneeIds: z.array(z.string().cuid()).optional(),
+    clientId: z.string().cuid().nullable().optional(),
+    assigneeIds: z.array(z.string().cuid()).min(1, 'At least one assignee is required').optional(),
   })
   .refine((data) => Object.keys(data).length > 0, { message: 'Provide at least one field to update' });
 export type UpdateTaskInput = z.infer<typeof updateTaskSchema>;
@@ -190,6 +201,8 @@ export interface TaskSummary {
   dueDate: string | null;
   projectId: string | null;
   projectName: string | null;
+  clientId: string | null;
+  clientName: string | null;
   assignees: TaskAssigneeSummary[];
   createdById: string;
   createdByName: string;
@@ -526,4 +539,75 @@ export interface LlmSettingsStatus {
   configured: boolean;
   model: string | null;
   updatedAt: string | null;
+}
+
+// --- Slice 21: MoM (Minutes of Meeting) PDF upload → AI-extracted task queue ---
+
+export const updateMomAiSettingsSchema = z.object({
+  apiKey: z.string().trim().min(1, 'API key is required'),
+  model: z.string().trim().min(1).optional(),
+});
+export type UpdateMomAiSettingsInput = z.infer<typeof updateMomAiSettingsSchema>;
+
+export interface MomAiSettingsStatus {
+  configured: boolean;
+  model: string | null;
+  updatedAt: string | null;
+}
+
+export const MOM_CANDIDATE_STATUSES = ['PENDING', 'ACCEPTED', 'REJECTED'] as const;
+export type MomCandidateStatusName = (typeof MOM_CANDIDATE_STATUSES)[number];
+
+export const listMomCandidatesQuerySchema = z.object({
+  status: z.enum(MOM_CANDIDATE_STATUSES).optional(),
+});
+export type ListMomCandidatesQuery = z.infer<typeof listMomCandidatesQuerySchema>;
+
+export const updateMomCandidateSchema = z
+  .object({
+    title: z.string().trim().min(1, 'Title is required').max(200).optional(),
+    description: z.string().trim().min(1, 'Description is required').max(5000).optional(),
+    dueDate: z.coerce.date().nullable().optional(),
+    assigneeId: z.string().cuid().nullable().optional(),
+    priority: z.enum(TASK_PRIORITIES).optional(),
+  })
+  .refine((data) => Object.keys(data).length > 0, { message: 'Provide at least one field to update' });
+export type UpdateMomCandidateInput = z.infer<typeof updateMomCandidateSchema>;
+
+export interface MomUploadSummary {
+  id: string;
+  fileName: string;
+  sizeBytes: number;
+  itemsFound: number;
+  itemsNew: number;
+  uploadedById: string;
+  uploadedByName: string;
+  createdAt: string;
+}
+
+export interface MomTaskCandidateSummary {
+  id: string;
+  momUploadId: string;
+  momUploadFileName: string;
+  title: string;
+  description: string;
+  suggestedAssigneeName: string | null;
+  suggestedAssigneeId: string | null;
+  dueDate: string | null;
+  priority: TaskPriorityName;
+  context: string | null;
+  status: MomCandidateStatusName;
+  createdTaskId: string | null;
+  reviewedById: string | null;
+  reviewedByName: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MomUploadResult {
+  itemsFound: number;
+  itemsNew: number;
+  itemsSkipped: number;
+  candidates: MomTaskCandidateSummary[];
 }

@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
-import type { AuthOrg, AuthUser, LoginInput, RegisterInput, RoleName } from '@madre-pulse/shared';
+import type { AuthOrg, AuthUser, ChangePasswordInput, LoginInput, RegisterInput, RoleName } from '@madre-pulse/shared';
 import type { Env } from '../config/env.validation';
 import { deriveInitials, pickAvatarColor } from '../common/utils/avatar';
 import { PrismaService } from '../prisma/prisma.service';
@@ -165,6 +165,26 @@ export class AuthService {
       this.prisma.organization.findUniqueOrThrow({ where: { id: payload.orgId } }),
     ]);
     return { user: this.toAuthUser(user), org: this.toAuthOrg(org), role: payload.role };
+  }
+
+  /** currentRawRefreshToken (if provided) is left alone so the session making this change doesn't
+   * get logged out too — every *other* refresh token for this user is revoked, forcing re-auth
+   * everywhere else, same "kill the family" treatment as detected refresh-token reuse. */
+  async changePassword(userId: string, input: ChangePasswordInput, currentRawRefreshToken?: string): Promise<void> {
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    const valid = await bcrypt.compare(input.currentPassword, user.passwordHash);
+    if (!valid) throw new UnauthorizedException('Current password is incorrect');
+
+    const passwordHash = await bcrypt.hash(input.newPassword, BCRYPT_ROUNDS);
+    const currentTokenHash = currentRawRefreshToken ? this.hashToken(currentRawRefreshToken) : undefined;
+
+    await this.prisma.$transaction([
+      this.prisma.user.update({ where: { id: userId }, data: { passwordHash } }),
+      this.prisma.refreshToken.updateMany({
+        where: { userId, revokedAt: null, ...(currentTokenHash ? { tokenHash: { not: currentTokenHash } } : {}) },
+        data: { revokedAt: new Date() },
+      }),
+    ]);
   }
 
   private async issueSession(user: UserRecord, org: OrgRecord, role: RoleName): Promise<AuthResult> {

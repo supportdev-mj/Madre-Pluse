@@ -6,6 +6,7 @@ import { AppNav } from '../../components/app-nav';
 import { FormField } from '../../components/form-field';
 import { apiFetch } from '../../lib/api-client';
 import { useRequireAuth } from '../../lib/use-require-auth';
+import { EditMemberModal } from './edit-member-modal';
 
 export default function TeamPage() {
   const { status, role } = useRequireAuth();
@@ -18,6 +19,8 @@ export default function TeamPage() {
   const [name, setName] = useState('');
   const [newRole, setNewRole] = useState<RoleName>('USER');
   const [submitting, setSubmitting] = useState(false);
+
+  const [editingMember, setEditingMember] = useState<MemberSummary | null>(null);
 
   useEffect(() => {
     if (status !== 'authenticated') return;
@@ -60,7 +63,10 @@ export default function TeamPage() {
     }
   }
 
-  async function onUpdateMember(membershipId: string, patch: { role?: RoleName; status?: MembershipStatusName }) {
+  async function onUpdateMember(
+    membershipId: string,
+    patch: { role?: RoleName; status?: MembershipStatusName; managerId?: string | null },
+  ) {
     setError(null);
     try {
       const updated = await apiFetch<MemberSummary>(`/members/${membershipId}`, {
@@ -70,6 +76,21 @@ export default function TeamPage() {
       setMembers((prev) => prev.map((m) => (m.membershipId === membershipId ? updated : m)));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update member.');
+    }
+  }
+
+  async function onResetPassword(member: MemberSummary) {
+    if (!window.confirm(`Reset ${member.name}'s password? They'll be signed out everywhere and need the new password to sign back in.`)) return;
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await apiFetch<{ member: MemberSummary; temporaryPassword: string }>(
+        `/members/${member.membershipId}/reset-password`,
+        { method: 'POST' },
+      );
+      setNotice(`${member.name}'s password was reset. Temporary password (share this with them securely): ${result.temporaryPassword}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to reset password.');
     }
   }
 
@@ -96,6 +117,7 @@ export default function TeamPage() {
                   <th className="px-4 py-2">Name</th>
                   <th className="px-4 py-2">Email</th>
                   <th className="px-4 py-2">Role</th>
+                  <th className="px-4 py-2">Manager</th>
                   <th className="px-4 py-2">Status</th>
                   {isAdmin && <th className="px-4 py-2" />}
                 </tr>
@@ -120,18 +142,46 @@ export default function TeamPage() {
                         m.role
                       )}
                     </td>
+                    <td className="px-4 py-2 text-text">
+                      {isAdmin ? (
+                        <select
+                          value={m.managerId ?? ''}
+                          onChange={(e) => onUpdateMember(m.membershipId, { managerId: e.target.value || null })}
+                          className="rounded border border-border bg-surface px-2 py-1 text-sm text-text"
+                        >
+                          <option value="">None</option>
+                          {members
+                            .filter((c) => c.membershipId !== m.membershipId && (c.role === 'ADMIN' || c.role === 'MANAGER'))
+                            .map((c) => (
+                              <option key={c.membershipId} value={c.membershipId}>
+                                {c.name}
+                              </option>
+                            ))}
+                        </select>
+                      ) : (
+                        (m.managerName ?? '—')
+                      )}
+                    </td>
                     <td className="px-4 py-2 text-text">{m.status}</td>
                     {isAdmin && (
                       <td className="px-4 py-2">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            onUpdateMember(m.membershipId, { status: m.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE' })
-                          }
-                          className="text-sm text-accent"
-                        >
-                          {m.status === 'ACTIVE' ? 'Disable' : 'Enable'}
-                        </button>
+                        <div className="flex items-center gap-3">
+                          <button type="button" onClick={() => setEditingMember(m)} className="text-sm text-accent">
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onUpdateMember(m.membershipId, { status: m.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE' })
+                            }
+                            className="text-sm text-accent"
+                          >
+                            {m.status === 'ACTIVE' ? 'Disable' : 'Enable'}
+                          </button>
+                          <button type="button" onClick={() => onResetPassword(m)} className="text-sm text-accent">
+                            Reset password
+                          </button>
+                        </div>
                       </td>
                     )}
                   </tr>
@@ -168,6 +218,14 @@ export default function TeamPage() {
               </button>
             </form>
           </div>
+        )}
+
+        {editingMember && (
+          <EditMemberModal
+            member={editingMember}
+            onClose={() => setEditingMember(null)}
+            onSaved={(updated) => setMembers((prev) => prev.map((m) => (m.membershipId === updated.membershipId ? updated : m)))}
+          />
         )}
       </main>
     </div>
