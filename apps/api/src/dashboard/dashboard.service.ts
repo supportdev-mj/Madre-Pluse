@@ -3,6 +3,7 @@ import { ClsService } from 'nestjs-cls';
 import type { DashboardSummary, TaskPriorityName, TaskStatusName } from '@madre-pulse/shared';
 import type { AppClsStore } from '../common/tenant/cls-store.type';
 import { requireOrgId } from '../common/tenant/require-org-id';
+import { getTaskVisibleUserIds, taskVisibilityWhere } from '../common/tenant/task-visibility';
 import { PrismaService } from '../prisma/prisma.service';
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -20,26 +21,31 @@ export class DashboardService {
     const orgId = requireOrgId(this.cls);
     const now = new Date();
     const sevenDaysAgo = new Date(now.getTime() - SEVEN_DAYS_MS);
+    const visibleUserIds = await getTaskVisibleUserIds(this.prisma, this.cls, orgId);
+    const taskWhere = taskVisibilityWhere(visibleUserIds);
 
     const [statusGroups, priorityGroups, overdueCount, overdueTasksRaw, completedLast7Days, activeMembers, onTimeStats, recentActivityRaw] =
       await Promise.all([
-        this.prisma.task.groupBy({ by: ['status'], where: { orgId }, _count: true }),
-        this.prisma.task.groupBy({ by: ['priority'], where: { orgId }, _count: true }),
-        this.prisma.task.count({ where: { orgId, status: { not: 'DONE' }, dueDate: { lt: now } } }),
+        this.prisma.task.groupBy({ by: ['status'], where: { orgId, ...taskWhere }, _count: true }),
+        this.prisma.task.groupBy({ by: ['priority'], where: { orgId, ...taskWhere }, _count: true }),
+        this.prisma.task.count({ where: { orgId, status: { not: 'DONE' }, dueDate: { lt: now }, ...taskWhere } }),
         this.prisma.task.findMany({
-          where: { orgId, status: { not: 'DONE' }, dueDate: { lt: now } },
+          where: { orgId, status: { not: 'DONE' }, dueDate: { lt: now }, ...taskWhere },
           include: { assignments: { include: { user: true } } },
           orderBy: { dueDate: 'asc' },
           take: OVERDUE_PREVIEW_LIMIT,
         }),
-        this.prisma.task.count({ where: { orgId, completedAt: { gte: sevenDaysAgo } } }),
-        this.prisma.membership.findMany({ where: { orgId, status: 'ACTIVE' }, include: { user: true } }),
+        this.prisma.task.count({ where: { orgId, completedAt: { gte: sevenDaysAgo }, ...taskWhere } }),
+        this.prisma.membership.findMany({
+          where: { orgId, status: 'ACTIVE', ...(visibleUserIds ? { userId: { in: visibleUserIds } } : {}) },
+          include: { user: true },
+        }),
         this.prisma.task.findMany({
-          where: { orgId, completedAt: { not: null }, dueDate: { not: null } },
+          where: { orgId, completedAt: { not: null }, dueDate: { not: null }, ...taskWhere },
           select: { completedAt: true, dueDate: true },
         }),
         this.prisma.taskActivity.findMany({
-          where: { task: { orgId } },
+          where: { task: { orgId, ...taskWhere } },
           include: { actor: true, task: { select: { title: true } } },
           orderBy: { createdAt: 'desc' },
           take: RECENT_ACTIVITY_LIMIT,

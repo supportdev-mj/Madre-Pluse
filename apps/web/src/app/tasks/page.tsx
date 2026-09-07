@@ -1,21 +1,20 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  createTaskSchema,
-  TASK_PRIORITIES,
   TASK_STATUSES,
+  type ClientSummary,
+  type CreateTaskInput,
   type MemberSummary,
   type ProjectSummary,
-  type TaskPriorityName,
   type TaskStatusName,
   type TaskSummary,
 } from '@madre-pulse/shared';
 import { AppNav } from '../../components/app-nav';
-import { FormField } from '../../components/form-field';
 import { apiFetch } from '../../lib/api-client';
 import { useRequireAuth } from '../../lib/use-require-auth';
+import { AddTaskModal } from './add-task-modal';
 import { TaskBoardView } from './task-board-view';
 import { TaskCalendarView } from './task-calendar-view';
 
@@ -37,20 +36,14 @@ export default function TasksPage() {
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [members, setMembers] = useState<MemberSummary[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [clients, setClients] = useState<ClientSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [view, setView] = useState<TaskView>('list');
   const [statusFilter, setStatusFilter] = useState<TaskStatusName | ''>('');
   const [assigneeFilter, setAssigneeFilter] = useState<string>('');
-
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [priority, setPriority] = useState<TaskPriorityName>('MEDIUM');
-  const [dueDate, setDueDate] = useState('');
-  const [projectId, setProjectId] = useState('');
-  const [assigneeIds, setAssigneeIds] = useState<string[]>([]);
-  const [submitting, setSubmitting] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
 
   async function loadTasks() {
     const params = new URLSearchParams();
@@ -64,10 +57,15 @@ export default function TasksPage() {
   useEffect(() => {
     if (status !== 'authenticated') return;
     setLoading(true);
-    Promise.all([apiFetch<MemberSummary[]>('/members'), apiFetch<ProjectSummary[]>('/projects')])
-      .then(([m, p]) => {
+    Promise.all([
+      apiFetch<MemberSummary[]>('/members'),
+      apiFetch<ProjectSummary[]>('/projects'),
+      apiFetch<ClientSummary[]>('/clients'),
+    ])
+      .then(([m, p, c]) => {
         setMembers(m);
         setProjects(p);
+        setClients(c);
       })
       .then(loadTasks)
       .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load tasks'))
@@ -81,38 +79,9 @@ export default function TasksPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter, assigneeFilter]);
 
-  async function onAddTask(e: FormEvent) {
-    e.preventDefault();
-    setError(null);
-
-    const parsed = createTaskSchema.safeParse({
-      title,
-      description: description || undefined,
-      priority,
-      dueDate: dueDate || undefined,
-      projectId: projectId || undefined,
-      assigneeIds: assigneeIds.length > 0 ? assigneeIds : undefined,
-    });
-    if (!parsed.success) {
-      setError(parsed.error.issues[0]?.message ?? 'Please check your input.');
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      const task = await apiFetch<TaskSummary>('/tasks', { method: 'POST', body: JSON.stringify(parsed.data) });
-      setTasks((prev) => [task, ...prev]);
-      setTitle('');
-      setDescription('');
-      setPriority('MEDIUM');
-      setDueDate('');
-      setProjectId('');
-      setAssigneeIds([]);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add task.');
-    } finally {
-      setSubmitting(false);
-    }
+  async function onAddTask(input: CreateTaskInput) {
+    const task = await apiFetch<TaskSummary>('/tasks', { method: 'POST', body: JSON.stringify(input) });
+    setTasks((prev) => [task, ...prev]);
   }
 
   async function onStatusChange(task: TaskSummary, nextStatus: TaskStatusName) {
@@ -141,22 +110,32 @@ export default function TasksPage() {
   if (status !== 'authenticated') return null;
 
   const canDelete = role === 'ADMIN' || role === 'MANAGER';
-  const activeMembers = members.filter((m) => m.status === 'ACTIVE');
 
   function canEdit(task: TaskSummary): boolean {
     return canDelete || task.assignees.some((a) => a.userId === user?.id) || task.createdById === user?.id;
-  }
-
-  function toggleAssignee(userId: string) {
-    setAssigneeIds((prev) => (prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]));
   }
 
   return (
     <div className="min-h-screen sm:pl-60">
       <AppNav />
       <main className="mx-auto max-w-6xl px-4 pb-4 pt-16 sm:px-8 sm:pb-8 sm:pt-8">
-        <div className="mb-6 flex items-center justify-between">
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
           <h1 className="text-xl font-bold text-text">Tasks</h1>
+          <button
+            type="button"
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-1.5 rounded-card bg-accent px-4 py-2 text-sm font-medium text-white"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="h-4 w-4">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+            </svg>
+            Task
+          </button>
+        </div>
+
+        {error && <p className="mb-4 text-sm text-red-500">{error}</p>}
+
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
           <div className="flex overflow-hidden rounded-card border border-border text-sm">
             {(['list', 'board', 'calendar'] as const).map((v) => (
               <button
@@ -169,43 +148,41 @@ export default function TasksPage() {
               </button>
             ))}
           </div>
-        </div>
 
-        {error && <p className="mb-4 text-sm text-red-500">{error}</p>}
-
-        <div className="mb-4 flex flex-wrap gap-4">
-          {view !== 'board' && (
+          <div className="flex flex-wrap gap-4">
+            {view !== 'board' && (
+              <label className="flex flex-col gap-1 text-sm text-text">
+                Status
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value as TaskStatusName | '')}
+                  className="rounded-card border border-border bg-surface-alt px-3 py-2 text-sm text-text"
+                >
+                  <option value="">All</option>
+                  {TASK_STATUSES.map((s) => (
+                    <option key={s} value={s}>
+                      {STATUS_LABELS[s]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label className="flex flex-col gap-1 text-sm text-text">
-              Status
+              Assignee
               <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value as TaskStatusName | '')}
+                value={assigneeFilter}
+                onChange={(e) => setAssigneeFilter(e.target.value)}
                 className="rounded-card border border-border bg-surface-alt px-3 py-2 text-sm text-text"
               >
                 <option value="">All</option>
-                {TASK_STATUSES.map((s) => (
-                  <option key={s} value={s}>
-                    {STATUS_LABELS[s]}
+                {members.map((m) => (
+                  <option key={m.userId} value={m.userId}>
+                    {m.name}
                   </option>
                 ))}
               </select>
             </label>
-          )}
-          <label className="flex flex-col gap-1 text-sm text-text">
-            Assignee
-            <select
-              value={assigneeFilter}
-              onChange={(e) => setAssigneeFilter(e.target.value)}
-              className="rounded-card border border-border bg-surface-alt px-3 py-2 text-sm text-text"
-            >
-              <option value="">All</option>
-              {members.map((m) => (
-                <option key={m.userId} value={m.userId}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          </div>
         </div>
 
         {loading ? (
@@ -231,6 +208,7 @@ export default function TasksPage() {
                   <th className="px-4 py-2">Due</th>
                   <th className="px-4 py-2">Assignee</th>
                   <th className="px-4 py-2">Project</th>
+                  <th className="px-4 py-2">Client</th>
                   {canDelete && <th className="px-4 py-2" />}
                 </tr>
               </thead>
@@ -265,6 +243,7 @@ export default function TasksPage() {
                       {t.assignees.length > 0 ? t.assignees.map((a) => a.name).join(', ') : '—'}
                     </td>
                     <td className="px-4 py-2 text-muted">{t.projectName ?? '—'}</td>
+                    <td className="px-4 py-2 text-muted">{t.clientName ?? '—'}</td>
                     {canDelete && (
                       <td className="px-4 py-2">
                         <button type="button" onClick={() => onDelete(t.id)} className="text-sm text-red-500">
@@ -279,69 +258,15 @@ export default function TasksPage() {
           </div>
         )}
 
-        <div className="max-w-sm rounded-card border border-border bg-surface p-6">
-          <h2 className="mb-4 text-base font-semibold text-text">Add a task</h2>
-          <form onSubmit={onAddTask} className="flex flex-col gap-4">
-            <FormField label="Title" value={title} onChange={setTitle} />
-            <FormField label="Description (optional)" value={description} onChange={setDescription} required={false} />
-            <label className="flex flex-col gap-1 text-sm text-text">
-              Priority
-              <select
-                value={priority}
-                onChange={(e) => setPriority(e.target.value as TaskPriorityName)}
-                className="rounded-card border border-border bg-surface-alt px-3 py-2 text-sm text-text"
-              >
-                {TASK_PRIORITIES.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <FormField label="Due date (optional)" type="date" value={dueDate} onChange={setDueDate} required={false} />
-            <label className="flex flex-col gap-1 text-sm text-text">
-              Project (optional)
-              <select
-                value={projectId}
-                onChange={(e) => setProjectId(e.target.value)}
-                className="rounded-card border border-border bg-surface-alt px-3 py-2 text-sm text-text"
-              >
-                <option value="">No project</option>
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="flex flex-col gap-1 text-sm text-text">
-              Assignees (optional)
-              <div className="flex flex-col gap-1.5 rounded-card border border-border bg-surface-alt px-3 py-2">
-                {activeMembers.length === 0 ? (
-                  <span className="text-xs text-muted">No active members yet.</span>
-                ) : (
-                  activeMembers.map((m) => (
-                    <label key={m.userId} className="flex items-center gap-2 text-sm text-text">
-                      <input
-                        type="checkbox"
-                        checked={assigneeIds.includes(m.userId)}
-                        onChange={() => toggleAssignee(m.userId)}
-                      />
-                      {m.name}
-                    </label>
-                  ))
-                )}
-              </div>
-            </div>
-            <button
-              type="submit"
-              disabled={submitting}
-              className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-            >
-              {submitting ? 'Adding…' : 'Add task'}
-            </button>
-          </form>
-        </div>
+        {showAddModal && (
+          <AddTaskModal
+            members={members}
+            projects={projects}
+            clients={clients}
+            onClose={() => setShowAddModal(false)}
+            onSubmit={onAddTask}
+          />
+        )}
       </main>
     </div>
   );

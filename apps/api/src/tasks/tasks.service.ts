@@ -13,6 +13,7 @@ import type {
 } from '@madre-pulse/shared';
 import type { AppClsStore } from '../common/tenant/cls-store.type';
 import { requireOrgId } from '../common/tenant/require-org-id';
+import { getTaskVisibleUserIds, taskVisibilityWhere } from '../common/tenant/task-visibility';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertCanModifyTask } from './task-permissions';
@@ -31,6 +32,8 @@ interface TaskRecord {
   dueDate: Date | null;
   projectId: string | null;
   project: { name: string } | null;
+  clientId: string | null;
+  client: { name: string } | null;
   assignments: { user: { id: string; name: string; initials: string; avatarColor: string } }[];
   createdById: string;
   createdBy: { name: string };
@@ -40,6 +43,7 @@ interface TaskRecord {
 
 const TASK_INCLUDE = {
   project: true,
+  client: true,
   createdBy: true,
   assignments: { include: { user: true } },
 } as const;
@@ -54,6 +58,7 @@ export class TasksService {
 
   async list(query: ListTasksQuery): Promise<TaskSummary[]> {
     const orgId = requireOrgId(this.cls);
+    const visibleUserIds = await getTaskVisibleUserIds(this.prisma, this.cls, orgId);
     const tasks = await this.prisma.task.findMany({
       where: {
         orgId,
@@ -61,6 +66,7 @@ export class TasksService {
         priority: query.priority,
         projectId: query.projectId,
         assignments: query.assigneeId ? { some: { userId: query.assigneeId } } : undefined,
+        ...taskVisibilityWhere(visibleUserIds),
       },
       include: TASK_INCLUDE,
       orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }],
@@ -70,8 +76,9 @@ export class TasksService {
 
   async get(id: string): Promise<TaskSummary> {
     const orgId = requireOrgId(this.cls);
+    const visibleUserIds = await getTaskVisibleUserIds(this.prisma, this.cls, orgId);
     const task = await this.prisma.task.findFirst({
-      where: { id, orgId },
+      where: { id, orgId, ...taskVisibilityWhere(visibleUserIds) },
       include: TASK_INCLUDE,
     });
     if (!task) throw new NotFoundException('Task not found');
@@ -84,6 +91,7 @@ export class TasksService {
     const assigneeIds = [...new Set(input.assigneeIds ?? [])];
 
     if (input.projectId) await this.assertProjectInOrg(input.projectId, orgId);
+    if (input.clientId) await this.assertClientInOrg(input.clientId, orgId);
     for (const userId of assigneeIds) await this.assertActiveMemberOfOrg(userId, orgId);
 
     const task = await this.prisma.$transaction(async (tx) => {
@@ -92,11 +100,12 @@ export class TasksService {
           orgId,
           createdById,
           title: input.title,
-          description: input.description ?? null,
+          description: input.description,
           status: input.status ?? 'TODO',
           priority: input.priority ?? 'MEDIUM',
-          dueDate: input.dueDate ?? null,
+          dueDate: input.dueDate,
           projectId: input.projectId ?? null,
+          clientId: input.clientId ?? null,
           completedAt: (input.status ?? 'TODO') === 'DONE' ? new Date() : null,
           assignments: { createMany: { data: assigneeIds.map((userId) => ({ userId })) } },
         },
@@ -124,8 +133,9 @@ export class TasksService {
 
   async update(id: string, input: UpdateTaskInput): Promise<TaskSummary> {
     const orgId = requireOrgId(this.cls);
+    const visibleUserIds = await getTaskVisibleUserIds(this.prisma, this.cls, orgId);
     const existing = await this.prisma.task.findFirst({
-      where: { id, orgId },
+      where: { id, orgId, ...taskVisibilityWhere(visibleUserIds) },
       include: { assignments: true },
     });
     if (!existing) throw new NotFoundException('Task not found');
@@ -133,6 +143,7 @@ export class TasksService {
     assertCanModifyTask(this.cls, { assigneeIds: existing.assignments.map((a) => a.userId), createdById: existing.createdById });
 
     if (input.projectId) await this.assertProjectInOrg(input.projectId, orgId);
+    if (input.clientId) await this.assertClientInOrg(input.clientId, orgId);
     const nextAssigneeIds = input.assigneeIds !== undefined ? [...new Set(input.assigneeIds)] : undefined;
     if (nextAssigneeIds) for (const userId of nextAssigneeIds) await this.assertActiveMemberOfOrg(userId, orgId);
 
@@ -157,6 +168,7 @@ export class TasksService {
           priority: input.priority,
           dueDate: input.dueDate,
           projectId: input.projectId,
+          clientId: input.clientId,
           completedAt,
         },
         include: TASK_INCLUDE,
@@ -188,14 +200,16 @@ export class TasksService {
 
   async remove(id: string): Promise<void> {
     const orgId = requireOrgId(this.cls);
-    const existing = await this.prisma.task.findFirst({ where: { id, orgId } });
+    const visibleUserIds = await getTaskVisibleUserIds(this.prisma, this.cls, orgId);
+    const existing = await this.prisma.task.findFirst({ where: { id, orgId, ...taskVisibilityWhere(visibleUserIds) } });
     if (!existing) throw new NotFoundException('Task not found');
     await this.prisma.task.delete({ where: { id } });
   }
 
   async listActivity(taskId: string): Promise<TaskActivitySummary[]> {
     const orgId = requireOrgId(this.cls);
-    const task = await this.prisma.task.findFirst({ where: { id: taskId, orgId } });
+    const visibleUserIds = await getTaskVisibleUserIds(this.prisma, this.cls, orgId);
+    const task = await this.prisma.task.findFirst({ where: { id: taskId, orgId, ...taskVisibilityWhere(visibleUserIds) } });
     if (!task) throw new NotFoundException('Task not found');
 
     const activities = await this.prisma.taskActivity.findMany({
@@ -268,6 +282,11 @@ export class TasksService {
     if (!project) throw new BadRequestException('Project not found in this organization');
   }
 
+  private async assertClientInOrg(clientId: string, orgId: string): Promise<void> {
+    const client = await this.prisma.client.findFirst({ where: { id: clientId, orgId } });
+    if (!client) throw new BadRequestException('Client not found in this organization');
+  }
+
   private async assertActiveMemberOfOrg(userId: string, orgId: string): Promise<void> {
     const membership = await this.prisma.membership.findFirst({ where: { userId, orgId, status: 'ACTIVE' } });
     if (!membership) throw new BadRequestException('Assignee is not an active member of this organization');
@@ -283,6 +302,8 @@ export class TasksService {
       dueDate: t.dueDate ? t.dueDate.toISOString() : null,
       projectId: t.projectId,
       projectName: t.project?.name ?? null,
+      clientId: t.clientId,
+      clientName: t.client?.name ?? null,
       assignees: t.assignments.map((a) => ({
         userId: a.user.id,
         name: a.user.name,

@@ -1,7 +1,14 @@
 import { Body, Controller, Get, HttpCode, Post, Req, Res, UseGuards } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
-import { loginSchema, registerSchema, type LoginInput, type RegisterInput } from '@madre-pulse/shared';
+import {
+  changePasswordSchema,
+  loginSchema,
+  registerSchema,
+  type ChangePasswordInput,
+  type LoginInput,
+  type RegisterInput,
+} from '@madre-pulse/shared';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
 import type { Env } from '../config/env.validation';
 import { AuthService, REFRESH_COOKIE_NAME } from './auth.service';
@@ -52,6 +59,17 @@ export class AuthController {
   @Get('me')
   async me(@CurrentUser() user: JwtPayload) {
     return this.authService.me(user);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('change-password')
+  @HttpCode(204)
+  async changePassword(
+    @CurrentUser() user: JwtPayload,
+    @Body(new ZodValidationPipe(changePasswordSchema)) dto: ChangePasswordInput,
+    @Req() req: Request,
+  ) {
+    await this.authService.changePassword(user.sub, dto, req.cookies?.[REFRESH_COOKIE_NAME]);
   }
 
   private setRefreshCookie(res: Response, token: string, expiresAt: Date) {

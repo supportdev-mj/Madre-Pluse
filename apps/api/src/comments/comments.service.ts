@@ -3,6 +3,7 @@ import { ClsService } from 'nestjs-cls';
 import type { CommentSummary, CreateCommentInput } from '@madre-pulse/shared';
 import type { AppClsStore } from '../common/tenant/cls-store.type';
 import { requireOrgId } from '../common/tenant/require-org-id';
+import { getTaskVisibleUserIds, taskVisibilityWhere } from '../common/tenant/task-visibility';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -85,8 +86,9 @@ export class CommentsService {
   }
 
   private async getTaskOrThrow(taskId: string, orgId: string) {
+    const visibleUserIds = await getTaskVisibleUserIds(this.prisma, this.cls, orgId);
     const task = await this.prisma.task.findFirst({
-      where: { id: taskId, orgId },
+      where: { id: taskId, orgId, ...taskVisibilityWhere(visibleUserIds) },
       include: { assignments: { select: { userId: true } } },
     });
     if (!task) throw new NotFoundException('Task not found');

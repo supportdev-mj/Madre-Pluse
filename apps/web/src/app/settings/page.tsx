@@ -1,13 +1,20 @@
 'use client';
 
 import { useEffect, useState, type FormEvent } from 'react';
-import { updateOrganizationSchema, type GoogleIntegrationStatus, type OrganizationSummary } from '@madre-pulse/shared';
+import {
+  updateMomAiSettingsSchema,
+  updateOrganizationSchema,
+  type GoogleIntegrationStatus,
+  type MomAiSettingsStatus,
+  type OrganizationSummary,
+} from '@madre-pulse/shared';
 import { AppNav } from '../../components/app-nav';
 import { FormField } from '../../components/form-field';
 import { apiFetch } from '../../lib/api-client';
 import { useAuth } from '../../lib/auth-context';
 import { useTheme } from '../../lib/theme-context';
 import { useRequireAuth } from '../../lib/use-require-auth';
+import { ChangePasswordForm } from './change-password-form';
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
@@ -31,6 +38,13 @@ export default function SettingsPage() {
   const [connecting, setConnecting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
 
+  const [momAi, setMomAi] = useState<MomAiSettingsStatus | null>(null);
+  const [momAiLoading, setMomAiLoading] = useState(true);
+  const [momApiKey, setMomApiKey] = useState('');
+  const [momModel, setMomModel] = useState('');
+  const [savingMomAi, setSavingMomAi] = useState(false);
+  const [momAiSaved, setMomAiSaved] = useState(false);
+
   const canView = role === 'ADMIN';
 
   function loadGoogleStatus() {
@@ -38,6 +52,13 @@ export default function SettingsPage() {
       .then(setGoogle)
       .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load Google integration status'))
       .finally(() => setGoogleLoading(false));
+  }
+
+  function loadMomAiStatus() {
+    return apiFetch<MomAiSettingsStatus>('/mom/settings')
+      .then(setMomAi)
+      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load AI provider status'))
+      .finally(() => setMomAiLoading(false));
   }
 
   useEffect(() => {
@@ -50,6 +71,7 @@ export default function SettingsPage() {
       .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load organization'))
       .finally(() => setLoading(false));
     loadGoogleStatus();
+    loadMomAiStatus();
 
     const params = new URLSearchParams(window.location.search);
     if (params.get('google') === 'connected') {
@@ -87,6 +109,34 @@ export default function SettingsPage() {
       setError(err instanceof Error ? err.message : 'Failed to disconnect Google Workspace.');
     } finally {
       setDisconnecting(false);
+    }
+  }
+
+  async function onSaveMomAi(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setMomAiSaved(false);
+
+    const parsed = updateMomAiSettingsSchema.safeParse({ apiKey: momApiKey, model: momModel || undefined });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message ?? 'Please check your input.');
+      return;
+    }
+
+    setSavingMomAi(true);
+    try {
+      const updated = await apiFetch<MomAiSettingsStatus>('/mom/settings', {
+        method: 'POST',
+        body: JSON.stringify(parsed.data),
+      });
+      setMomAi(updated);
+      setMomApiKey('');
+      setMomModel('');
+      setMomAiSaved(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save AI provider settings.');
+    } finally {
+      setSavingMomAi(false);
     }
   }
 
@@ -146,6 +196,10 @@ export default function SettingsPage() {
               </button>
             ))}
           </div>
+        </div>
+
+        <div className="mb-6">
+          <ChangePasswordForm />
         </div>
 
         <h2 className="mb-4 text-base font-semibold text-text">Organization</h2>
@@ -231,6 +285,50 @@ export default function SettingsPage() {
                 >
                   {connecting ? 'Redirecting…' : 'Connect Google Workspace'}
                 </button>
+              )}
+            </div>
+
+            <div className="rounded-card border border-border bg-surface p-6">
+              <h2 className="mb-1 text-base font-semibold text-text">AI provider (MOM extraction)</h2>
+              <p className="mb-4 text-sm text-muted">
+                Add your organization&apos;s Anthropic API key so the MOM page can read uploaded meeting-minutes
+                PDFs and extract action items into a review queue.
+              </p>
+              {momAiLoading ? (
+                <p className="text-sm text-muted">Loading…</p>
+              ) : (
+                <div className="flex flex-col gap-4">
+                  <p className="text-sm text-text">
+                    Status:{' '}
+                    {momAi?.configured ? (
+                      <span className="font-medium text-green-600">
+                        Configured{momAi.model ? ` (model: ${momAi.model})` : ''}
+                        {momAi.updatedAt ? ` — last updated ${formatDate(momAi.updatedAt)}` : ''}
+                      </span>
+                    ) : (
+                      <span className="font-medium text-red-500">Not configured</span>
+                    )}
+                  </p>
+                  <form onSubmit={onSaveMomAi} className="flex flex-col gap-4 sm:max-w-sm">
+                    <FormField
+                      label={momAi?.configured ? 'Replace API key' : 'API key'}
+                      type="password"
+                      value={momApiKey}
+                      onChange={setMomApiKey}
+                    />
+                    <FormField label="Model (optional)" value={momModel} onChange={setMomModel} required={false} />
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="submit"
+                        disabled={savingMomAi}
+                        className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                      >
+                        {savingMomAi ? 'Saving…' : 'Save'}
+                      </button>
+                      {momAiSaved && <span className="text-sm text-green-600">Saved.</span>}
+                    </div>
+                  </form>
+                </div>
               )}
             </div>
           </div>

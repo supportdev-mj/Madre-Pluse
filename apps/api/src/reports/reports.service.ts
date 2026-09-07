@@ -4,6 +4,7 @@ import { ClsService } from 'nestjs-cls';
 import type { ProductivityReport, ProductivityRow, ReportsQuery } from '@madre-pulse/shared';
 import type { AppClsStore } from '../common/tenant/cls-store.type';
 import { requireOrgId } from '../common/tenant/require-org-id';
+import { getTaskVisibleUserIds } from '../common/tenant/task-visibility';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -15,9 +16,10 @@ export class ReportsService {
 
   async getProductivity(query: ReportsQuery): Promise<ProductivityReport> {
     const orgId = requireOrgId(this.cls);
+    const visibleUserIds = await getTaskVisibleUserIds(this.prisma, this.cls, orgId);
 
     const members = await this.prisma.membership.findMany({
-      where: { orgId, status: 'ACTIVE' },
+      where: { orgId, status: 'ACTIVE', ...(visibleUserIds ? { userId: { in: visibleUserIds } } : {}) },
       include: { user: true },
     });
 

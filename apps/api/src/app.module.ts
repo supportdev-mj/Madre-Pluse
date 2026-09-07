@@ -25,6 +25,7 @@ import { ReopenRequestsModule } from './reopen-requests/reopen-requests.module';
 import { BlockerReportsModule } from './blocker-reports/blocker-reports.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { ReportsModule } from './reports/reports.module';
+import { MomModule } from './mom/mom.module';
 
 @Module({
   imports: [
@@ -62,6 +63,7 @@ import { ReportsModule } from './reports/reports.module';
     BlockerReportsModule,
     DashboardModule,
     ReportsModule,
+    MomModule,
   ],
   controllers: [HealthController],
 })
