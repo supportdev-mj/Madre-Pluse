@@ -25,9 +25,30 @@ function formatDate(iso: string | null): string {
   return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+interface UploadGroup {
+  momUploadId: string;
+  momUploadFileName: string;
+  uploadedAt: string;
+  candidates: MomTaskCandidateSummary[];
+}
+
+function groupByUpload(candidates: MomTaskCandidateSummary[]): UploadGroup[] {
+  const groups = new Map<string, UploadGroup>();
+  for (const c of candidates) {
+    let group = groups.get(c.momUploadId);
+    if (!group) {
+      group = { momUploadId: c.momUploadId, momUploadFileName: c.momUploadFileName, uploadedAt: c.createdAt, candidates: [] };
+      groups.set(c.momUploadId, group);
+    }
+    if (c.createdAt < group.uploadedAt) group.uploadedAt = c.createdAt;
+    group.candidates.push(c);
+  }
+  return [...groups.values()].sort((a, b) => (a.uploadedAt < b.uploadedAt ? 1 : -1));
+}
+
 export default function MomPage() {
-  const { status, role } = useRequireAuth();
-  const canAccess = role === 'ADMIN' || role === 'MANAGER';
+  const { status, role, user } = useRequireAuth();
+  const isManagerOrAdmin = role === 'ADMIN' || role === 'MANAGER';
 
   const [members, setMembers] = useState<MemberSummary[]>([]);
   const [candidates, setCandidates] = useState<MomTaskCandidateSummary[]>([]);
@@ -42,6 +63,7 @@ export default function MomPage() {
 
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editingCandidate, setEditingCandidate] = useState<MomTaskCandidateSummary | null>(null);
+  const [expandedUploads, setExpandedUploads] = useState<Set<string>>(new Set());
 
   async function loadCandidates(nextStatus: MomCandidateStatusName) {
     const data = await apiFetch<MomTaskCandidateSummary[]>(`/mom/candidates?status=${nextStatus}`);
@@ -49,17 +71,17 @@ export default function MomPage() {
   }
 
   useEffect(() => {
-    if (status !== 'authenticated' || !canAccess) return;
+    if (status !== 'authenticated') return;
     setLoading(true);
     Promise.all([apiFetch<MemberSummary[]>('/members'), loadCandidates(statusFilter)])
       .then(([m]) => setMembers(m))
       .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load MOM queue'))
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, canAccess]);
+  }, [status]);
 
   useEffect(() => {
-    if (status !== 'authenticated' || !canAccess) return;
+    if (status !== 'authenticated') return;
     setLoading(true);
     loadCandidates(statusFilter)
       .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load MOM queue'))
@@ -83,7 +105,12 @@ export default function MomPage() {
       );
       setUploadFile(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
-      if (statusFilter === 'PENDING') setCandidates((prev) => [...result.candidates, ...prev]);
+      if (statusFilter === 'PENDING') {
+        setCandidates((prev) => [...result.candidates, ...prev]);
+        if (result.candidates.length > 0) {
+          setExpandedUploads((prev) => new Set(prev).add(result.candidates[0].momUploadId));
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to process MOM PDF.');
     } finally {
@@ -126,159 +153,223 @@ export default function MomPage() {
     return !!c.title && !!c.description && !!c.dueDate && !!c.suggestedAssigneeId;
   }
 
+  function canReview(c: MomTaskCandidateSummary): boolean {
+    return isManagerOrAdmin || c.suggestedAssigneeId === user?.id;
+  }
+
+  function toggleUpload(id: string) {
+    setExpandedUploads((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   if (status !== 'authenticated') return null;
+
+  const groups = groupByUpload(candidates);
 
   return (
     <div className="min-h-screen sm:pl-60">
       <AppNav />
       <main className="mx-auto max-w-5xl px-4 pb-4 pt-16 sm:px-8 sm:pb-8 sm:pt-8">
-        <h1 className="mb-6 text-xl font-bold text-text">MOM</h1>
+        <h1 className="mb-1 text-xl font-bold text-text">MOM</h1>
+        <p className="mb-6 text-sm text-muted">
+          {isManagerOrAdmin
+            ? "Upload meeting-minutes PDFs and review the AI-extracted action items before they become real tasks."
+            : 'Action items an uploaded meeting-minutes PDF matched to you — accept, edit, or reject them.'}
+        </p>
 
-        {!canAccess ? (
-          <p className="text-sm text-muted">Only admins and managers can access MOM uploads.</p>
-        ) : (
-          <>
-            {error && <p className="mb-4 text-sm text-red-500">{error}</p>}
+        {error && <p className="mb-4 text-sm text-red-500">{error}</p>}
 
-            <div className="mb-6 rounded-card border border-border bg-surface p-6">
-              <h2 className="mb-1 text-base font-semibold text-text">Upload minutes of meeting</h2>
-              <p className="mb-4 text-sm text-muted">
-                Upload a MoM PDF. AI reads it, identifies action items and who&apos;s responsible for each, and adds
-                them to the review queue below — nothing becomes a real task until you accept it.
-              </p>
-              <form onSubmit={onUpload} className="flex flex-wrap items-center gap-3">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="application/pdf"
-                  onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
-                  className="text-sm text-text file:mr-3 file:rounded-card file:border file:border-border file:bg-surface-alt file:px-3 file:py-1.5 file:text-sm file:text-text"
-                />
-                <button
-                  type="submit"
-                  disabled={!uploadFile || uploading}
-                  className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                >
-                  {uploading ? 'Reading & extracting…' : 'Upload & extract'}
-                </button>
-              </form>
-              {uploadMsg && <p className="mt-3 text-sm text-green-600">{uploadMsg}</p>}
-            </div>
-
-            <div className="mb-4 flex items-center justify-between">
-              <div className="flex overflow-hidden rounded-card border border-border text-sm">
-                {MOM_CANDIDATE_STATUSES.map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => setStatusFilter(s)}
-                    className={`px-3 py-1.5 ${statusFilter === s ? 'bg-accent text-white' : 'bg-surface text-muted hover:text-text'}`}
-                  >
-                    {STATUS_LABELS[s]}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {loading ? (
-              <p className="text-muted">Loading…</p>
-            ) : candidates.length === 0 ? (
-              <p className="text-sm text-muted">
-                {statusFilter === 'PENDING' ? 'Nothing in the queue — upload a MoM PDF to get started.' : 'Nothing here yet.'}
-              </p>
-            ) : (
-              <div className="overflow-x-auto rounded-card border border-border">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-surface-alt text-muted">
-                    <tr>
-                      <th className="px-4 py-2">Task</th>
-                      <th className="px-4 py-2">Priority</th>
-                      <th className="px-4 py-2">Due</th>
-                      <th className="px-4 py-2">Assignee</th>
-                      <th className="px-4 py-2">Source</th>
-                      {statusFilter === 'PENDING' ? (
-                        <th className="px-4 py-2" />
-                      ) : (
-                        <th className="px-4 py-2">Reviewed by</th>
-                      )}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {candidates.map((c) => (
-                      <tr key={c.id} className="border-t border-border align-top">
-                        <td className="max-w-xs px-4 py-2 text-text">
-                          <div className="font-medium">
-                            {c.status === 'ACCEPTED' && c.createdTaskId ? (
-                              <Link href={`/tasks/${c.createdTaskId}`} className="hover:text-accent hover:underline">
-                                {c.title}
-                              </Link>
-                            ) : (
-                              c.title
-                            )}
-                          </div>
-                          <div className="mt-1 text-xs text-muted">{c.description}</div>
-                        </td>
-                        <td className="px-4 py-2 text-text">{c.priority}</td>
-                        <td className="px-4 py-2 text-muted">{formatDate(c.dueDate)}</td>
-                        <td className="px-4 py-2 text-muted">
-                          {c.suggestedAssigneeName ?? '—'}
-                          {c.suggestedAssigneeName && !c.suggestedAssigneeId && (
-                            <span className="ml-1 text-amber-600">(unmatched)</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-2 text-xs text-muted">{c.momUploadFileName}</td>
-                        {statusFilter === 'PENDING' ? (
-                          <td className="px-4 py-2">
-                            <div className="flex flex-col items-start gap-1.5">
-                              <button
-                                type="button"
-                                onClick={() => onAccept(c.id)}
-                                disabled={busyId === c.id || !readyToAccept(c)}
-                                title={!readyToAccept(c) ? 'Edit to complete required fields first' : undefined}
-                                className="text-sm font-medium text-green-600 disabled:opacity-40"
-                              >
-                                Accept
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setEditingCandidate(c)}
-                                disabled={busyId === c.id}
-                                className="text-sm text-accent"
-                              >
-                                Edit
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => onReject(c.id)}
-                                disabled={busyId === c.id}
-                                className="text-sm text-red-500"
-                              >
-                                Reject
-                              </button>
-                            </div>
-                          </td>
-                        ) : (
-                          <td className="px-4 py-2 text-xs text-muted">
-                            {c.reviewedByName ?? '—'}
-                            {c.reviewedAt && <div>{formatDate(c.reviewedAt)}</div>}
-                          </td>
-                        )}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            {editingCandidate && (
-              <EditCandidateModal
-                candidate={editingCandidate}
-                members={members}
-                onClose={() => setEditingCandidate(null)}
-                onSaved={onSaved}
+        {isManagerOrAdmin && (
+          <div className="mb-6 rounded-card border border-border bg-surface p-6">
+            <h2 className="mb-1 text-base font-semibold text-text">Upload minutes of meeting</h2>
+            <p className="mb-4 text-sm text-muted">
+              Upload a MoM PDF. AI reads it, identifies action items and who&apos;s responsible for each, and adds
+              them to the review queue below — nothing becomes a real task until it&apos;s accepted.
+            </p>
+            <form onSubmit={onUpload} className="flex flex-wrap items-center gap-3">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="application/pdf"
+                onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
+                className="text-sm text-text file:mr-3 file:rounded-card file:border file:border-border file:bg-surface-alt file:px-3 file:py-1.5 file:text-sm file:text-text"
               />
-            )}
-          </>
+              <button
+                type="submit"
+                disabled={!uploadFile || uploading}
+                className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+              >
+                {uploading ? 'Reading & extracting…' : 'Upload & extract'}
+              </button>
+            </form>
+            {uploadMsg && <p className="mt-3 text-sm text-green-600">{uploadMsg}</p>}
+          </div>
+        )}
+
+        <div className="mb-4 flex items-center justify-between">
+          <div className="flex overflow-hidden rounded-card border border-border text-sm">
+            {MOM_CANDIDATE_STATUSES.map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setStatusFilter(s)}
+                className={`px-3 py-1.5 ${statusFilter === s ? 'bg-accent text-white' : 'bg-surface text-muted hover:text-text'}`}
+              >
+                {STATUS_LABELS[s]}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {loading ? (
+          <p className="text-muted">Loading…</p>
+        ) : groups.length === 0 ? (
+          <p className="text-sm text-muted">
+            {statusFilter === 'PENDING'
+              ? isManagerOrAdmin
+                ? 'Nothing in the queue — upload a MoM PDF to get started.'
+                : 'Nothing matched to you right now.'
+              : 'Nothing here yet.'}
+          </p>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {groups.map((g) => {
+              const isOpen = expandedUploads.has(g.momUploadId);
+              return (
+                <div key={g.momUploadId} className="overflow-hidden rounded-card border border-border">
+                  <button
+                    type="button"
+                    onClick={() => toggleUpload(g.momUploadId)}
+                    className="flex w-full items-center justify-between gap-3 bg-surface-alt px-4 py-3 text-left"
+                  >
+                    <div className="flex min-w-0 items-center gap-2">
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        strokeWidth={2}
+                        stroke="currentColor"
+                        className={`h-4 w-4 shrink-0 text-muted transition-transform ${isOpen ? 'rotate-90' : ''}`}
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                      </svg>
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor" className="h-4 w-4 shrink-0 text-muted">
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-19.5 0v6a2.25 2.25 0 002.25 2.25h15a2.25 2.25 0 002.25-2.25v-6m-19.5 0h19.5M4.5 9.75V6a2.25 2.25 0 012.25-2.25h6.621a1.5 1.5 0 011.06.44l1.94 1.94a1.5 1.5 0 001.06.44H19.5A2.25 2.25 0 0121.75 9v.75"
+                        />
+                      </svg>
+                      <span className="truncate text-sm font-medium text-text">{g.momUploadFileName}</span>
+                      <span className="shrink-0 text-xs text-muted">{formatDate(g.uploadedAt)}</span>
+                    </div>
+                    <span className="shrink-0 text-xs text-muted">
+                      {g.candidates.length} item{g.candidates.length === 1 ? '' : 's'}
+                    </span>
+                  </button>
+
+                  {isOpen && (
+                    <div className="overflow-x-auto border-t border-border">
+                      <table className="w-full text-left text-sm">
+                        <thead className="bg-surface text-muted">
+                          <tr>
+                            <th className="px-4 py-2">Task</th>
+                            <th className="px-4 py-2">Priority</th>
+                            <th className="px-4 py-2">Due</th>
+                            <th className="px-4 py-2">Assignee</th>
+                            {statusFilter === 'PENDING' ? (
+                              <th className="px-4 py-2" />
+                            ) : (
+                              <th className="px-4 py-2">Reviewed by</th>
+                            )}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {g.candidates.map((c) => (
+                            <tr key={c.id} className="border-t border-border align-top">
+                              <td className="max-w-xs px-4 py-2 text-text">
+                                <div className="font-medium">
+                                  {c.status === 'ACCEPTED' && c.createdTaskId ? (
+                                    <Link href={`/tasks/${c.createdTaskId}`} className="hover:text-accent hover:underline">
+                                      {c.title}
+                                    </Link>
+                                  ) : (
+                                    c.title
+                                  )}
+                                </div>
+                                <div className="mt-1 text-xs text-muted">{c.description}</div>
+                              </td>
+                              <td className="px-4 py-2 text-text">{c.priority}</td>
+                              <td className="px-4 py-2 text-muted">{formatDate(c.dueDate)}</td>
+                              <td className="px-4 py-2 text-muted">
+                                {c.suggestedAssigneeName ?? '—'}
+                                {c.suggestedAssigneeName && !c.suggestedAssigneeId && (
+                                  <span className="ml-1 text-amber-600">(unmatched)</span>
+                                )}
+                              </td>
+                              {statusFilter === 'PENDING' ? (
+                                <td className="px-4 py-2">
+                                  {canReview(c) ? (
+                                    <div className="flex flex-col items-start gap-1.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => onAccept(c.id)}
+                                        disabled={busyId === c.id || !readyToAccept(c)}
+                                        title={!readyToAccept(c) ? 'Edit to complete required fields first' : undefined}
+                                        className="text-sm font-medium text-green-600 disabled:opacity-40"
+                                      >
+                                        Accept
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setEditingCandidate(c)}
+                                        disabled={busyId === c.id}
+                                        className="text-sm text-accent"
+                                      >
+                                        Edit
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => onReject(c.id)}
+                                        disabled={busyId === c.id}
+                                        className="text-sm text-red-500"
+                                      >
+                                        Reject
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <span className="text-xs text-muted">—</span>
+                                  )}
+                                </td>
+                              ) : (
+                                <td className="px-4 py-2 text-xs text-muted">
+                                  {c.reviewedByName ?? '—'}
+                                  {c.reviewedAt && <div>{formatDate(c.reviewedAt)}</div>}
+                                </td>
+                              )}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {editingCandidate && (
+          <EditCandidateModal
+            candidate={editingCandidate}
+            members={members}
+            onClose={() => setEditingCandidate(null)}
+            onSaved={onSaved}
+          />
         )}
       </main>
     </div>

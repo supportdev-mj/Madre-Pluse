@@ -61,13 +61,14 @@ export default function TasksPage() {
       apiFetch<MemberSummary[]>('/members'),
       apiFetch<ProjectSummary[]>('/projects'),
       apiFetch<ClientSummary[]>('/clients'),
+      apiFetch<TaskSummary[]>('/tasks'),
     ])
-      .then(([m, p, c]) => {
+      .then(([m, p, c, t]) => {
         setMembers(m);
         setProjects(p);
         setClients(c);
+        setTasks(t);
       })
-      .then(loadTasks)
       .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load tasks'))
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
+import type { RoleName } from '@madre-pulse/shared';
 import { NotificationBell } from './notification-bell';
 import { useAuth } from '../lib/auth-context';
 
@@ -85,20 +86,16 @@ function NavIcon({ label }: { label: string }) {
   );
 }
 
-const links = [
+const links: Array<{ href: string; label: string; roles?: RoleName[] }> = [
+  { href: '/dashboard', label: 'Dashboard', roles: ['ADMIN', 'MANAGER'] },
   { href: '/tasks', label: 'Tasks' },
   { href: '/team', label: 'Team' },
   { href: '/clients', label: 'Clients' },
   { href: '/projects', label: 'Projects' },
-];
-
-const managerLinks = [
-  { href: '/dashboard', label: 'Dashboard' },
-  { href: '/reports', label: 'Reports' },
   { href: '/mom', label: 'MOM' },
+  { href: '/reports', label: 'Reports', roles: ['ADMIN', 'MANAGER'] },
+  { href: '/settings', label: 'Settings' },
 ];
-
-const adminLinks = [{ href: '/settings', label: 'Settings' }];
 
 const superAdminLinks = [{ href: '/admin', label: 'Platform' }];
 
@@ -107,9 +104,7 @@ export function AppNav() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const visibleLinks = [
-    ...links,
-    ...(role === 'ADMIN' || role === 'MANAGER' ? managerLinks : []),
-    ...(role === 'ADMIN' ? adminLinks : []),
+    ...links.filter((l) => !l.roles || (role && l.roles.includes(role))),
     ...(user?.isSuperAdmin ? superAdminLinks : []),
   ];
 
