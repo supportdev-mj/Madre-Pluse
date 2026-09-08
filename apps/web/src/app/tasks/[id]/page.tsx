@@ -10,19 +10,22 @@ import {
   createSubtaskSchema,
   type AssignmentStatusName,
   type BlockerReportSummary,
+  type ClientSummary,
   type DependencySummary,
   type MemberSummary,
+  type ProjectSummary,
   type ReopenRequestSummary,
   type SubtaskSummary,
   type TaskSummary,
   type TimeEntrySummary,
+  type UpdateTaskInput,
   type VerificationDecision,
 } from '@madre-pulse/shared';
 import { AppNav } from '../../../components/app-nav';
 import { FormField } from '../../../components/form-field';
 import { apiFetch } from '../../../lib/api-client';
-import { computeAssignableMembers } from '../../../lib/assignable-members';
 import { useRequireAuth } from '../../../lib/use-require-auth';
+import { EditTaskModal } from '../edit-task-modal';
 import { TaskChatPanel } from './task-chat-panel';
 
 const STATUS_LABELS: Record<string, string> = {
@@ -82,7 +85,9 @@ export default function TaskDetailPage() {
   const [dependencies, setDependencies] = useState<DependencySummary[]>([]);
   const [allTasks, setAllTasks] = useState<TaskSummary[]>([]);
   const [members, setMembers] = useState<MemberSummary[]>([]);
-  const [updatingAssignees, setUpdatingAssignees] = useState(false);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [clients, setClients] = useState<ClientSummary[]>([]);
+  const [showEditModal, setShowEditModal] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -108,7 +113,7 @@ export default function TaskDetailPage() {
   const [reportingBlocker, setReportingBlocker] = useState(false);
 
   async function loadAll() {
-    const [t, s, d, all, entries, reopens, mems, blockers] = await Promise.all([
+    const [t, s, d, all, entries, reopens, mems, blockers, projs, clis] = await Promise.all([
       apiFetch<TaskSummary>(`/tasks/${taskId}`),
       apiFetch<SubtaskSummary[]>(`/tasks/${taskId}/subtasks`),
       apiFetch<DependencySummary[]>(`/tasks/${taskId}/dependencies`),
@@ -117,6 +122,8 @@ export default function TaskDetailPage() {
       apiFetch<ReopenRequestSummary[]>(`/tasks/${taskId}/reopen-requests`),
       apiFetch<MemberSummary[]>('/members'),
       apiFetch<BlockerReportSummary[]>(`/tasks/${taskId}/blocker-reports`),
+      apiFetch<ProjectSummary[]>('/projects'),
+      apiFetch<ClientSummary[]>('/clients'),
     ]);
     setTask(t);
     setSubtasks(s);
@@ -126,6 +133,8 @@ export default function TaskDetailPage() {
     setReopenRequests(reopens);
     setMembers(mems);
     setBlockerReports(blockers);
+    setProjects(projs);
+    setClients(clis);
   }
 
   useEffect(() => {
@@ -406,24 +415,12 @@ export default function TaskDetailPage() {
     }
   }
 
-  async function onToggleAssignee(userId: string) {
-    if (!task) return;
-    setError(null);
-    const nextIds = task.assignees.some((a) => a.userId === userId)
-      ? task.assignees.filter((a) => a.userId !== userId).map((a) => a.userId)
-      : [...task.assignees.map((a) => a.userId), userId];
-    setUpdatingAssignees(true);
-    try {
-      const updated = await apiFetch<TaskSummary>(`/tasks/${taskId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ assigneeIds: nextIds }),
-      });
-      setTask(updated);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update assignees.');
-    } finally {
-      setUpdatingAssignees(false);
-    }
+  async function onEditTask(input: UpdateTaskInput) {
+    const updated = await apiFetch<TaskSummary>(`/tasks/${taskId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    });
+    setTask(updated);
   }
 
   if (status !== 'authenticated') return null;
@@ -468,7 +465,18 @@ export default function TaskDetailPage() {
 
             <div className="order-2 flex flex-col gap-6 lg:col-start-2">
               <div className="rounded-card border border-border bg-surface p-6">
-                <h1 className="mb-2 text-xl font-bold text-text">{task.title}</h1>
+                <div className="mb-2 flex items-start justify-between gap-3">
+                  <h1 className="text-xl font-bold text-text">{task.title}</h1>
+                  {canEditFields && (
+                    <button
+                      type="button"
+                      onClick={() => setShowEditModal(true)}
+                      className="shrink-0 rounded-card border border-border px-3 py-1.5 text-xs font-medium text-text hover:bg-surface-alt"
+                    >
+                      Edit
+                    </button>
+                  )}
+                </div>
                 {task.description && <p className="mb-3 text-sm text-muted">{task.description}</p>}
                 <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-muted">
                   <span>
@@ -487,22 +495,7 @@ export default function TaskDetailPage() {
 
                 <div className="mt-4">
                   <p className="mb-1.5 text-sm text-muted">Assignees</p>
-                  {canEditFields ? (
-                    <div className="flex flex-col gap-1.5 rounded-card border border-border bg-surface-alt px-3 py-2">
-                      {computeAssignableMembers(members, role, user?.id, task.assignees.map((a) => a.userId))
-                        .map((m) => (
-                          <label key={m.userId} className="flex items-center gap-2 text-sm text-text">
-                            <input
-                              type="checkbox"
-                              checked={task.assignees.some((a) => a.userId === m.userId)}
-                              disabled={updatingAssignees}
-                              onChange={() => onToggleAssignee(m.userId)}
-                            />
-                            {m.name}
-                          </label>
-                        ))}
-                    </div>
-                  ) : task.assignees.length > 0 ? (
+                  {task.assignees.length > 0 ? (
                     <div className="flex flex-wrap gap-2">
                       {task.assignees.map((a) => (
                         <span key={a.userId} className="flex items-center gap-1.5 rounded-full bg-surface-alt py-1 pl-1 pr-2.5 text-xs text-text">
@@ -930,6 +923,19 @@ export default function TaskDetailPage() {
               </div>
             </div>
           </div>
+        )}
+
+        {showEditModal && task && (
+          <EditTaskModal
+            task={task}
+            members={members}
+            role={role}
+            currentUserId={user?.id}
+            projects={projects}
+            clients={clients}
+            onClose={() => setShowEditModal(false)}
+            onSubmit={onEditTask}
+          />
         )}
       </main>
     </div>
