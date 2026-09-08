@@ -1,6 +1,6 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
-import type { CreateTimeEntryInput, TimeEntrySummary, UpdateTimeEntryInput } from '@madre-pulse/shared';
+import type { TimeEntrySummary, UpdateTimeEntryInput } from '@madre-pulse/shared';
 import type { AppClsStore } from '../common/tenant/cls-store.type';
 import { requireOrgId } from '../common/tenant/require-org-id';
 import { getTaskVisibleUserIds, taskVisibilityWhere } from '../common/tenant/task-visibility';
@@ -14,6 +14,8 @@ interface TimeEntryRecord {
   minutes: number;
   note: string | null;
   date: Date;
+  startedAt: Date | null;
+  endedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -37,18 +39,6 @@ export class TimeEntriesService {
     return entries.map((e) => this.toSummary(e));
   }
 
-  async create(taskId: string, input: CreateTimeEntryInput): Promise<TimeEntrySummary> {
-    const orgId = requireOrgId(this.cls);
-    await this.getTaskOrThrow(taskId, orgId);
-    const userId = this.currentUserId();
-
-    const entry = await this.prisma.timeEntry.create({
-      data: { taskId, userId, minutes: input.minutes, note: input.note ?? null, date: input.date ?? new Date() },
-      include: { user: true },
-    });
-    return this.toSummary(entry);
-  }
-
   async update(taskId: string, entryId: string, input: UpdateTimeEntryInput): Promise<TimeEntrySummary> {
     const orgId = requireOrgId(this.cls);
     await this.getTaskOrThrow(taskId, orgId);
@@ -65,28 +55,11 @@ export class TimeEntriesService {
     return this.toSummary(entry);
   }
 
-  async remove(taskId: string, entryId: string): Promise<void> {
-    const orgId = requireOrgId(this.cls);
-    await this.getTaskOrThrow(taskId, orgId);
-
-    const existing = await this.prisma.timeEntry.findFirst({ where: { id: entryId, taskId } });
-    if (!existing) throw new NotFoundException('Time entry not found');
-    this.assertCanModify(existing);
-
-    await this.prisma.timeEntry.delete({ where: { id: entryId } });
-  }
-
   private assertCanModify(entry: { userId: string }): void {
     const role = this.cls.get('role');
     const userId = this.cls.get('userId');
     if (role === 'ADMIN' || role === 'MANAGER' || entry.userId === userId) return;
     throw new ForbiddenException('You can only modify your own time entries');
-  }
-
-  private currentUserId(): string {
-    const userId = this.cls.get('userId');
-    if (!userId) throw new ForbiddenException();
-    return userId;
   }
 
   private async getTaskOrThrow(taskId: string, orgId: string) {
@@ -107,6 +80,8 @@ export class TimeEntriesService {
       minutes: e.minutes,
       note: e.note,
       date: e.date.toISOString(),
+      startedAt: e.startedAt ? e.startedAt.toISOString() : null,
+      endedAt: e.endedAt ? e.endedAt.toISOString() : null,
       createdAt: e.createdAt.toISOString(),
       updatedAt: e.updatedAt.toISOString(),
     };

@@ -1,53 +1,55 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
-import { updateMemberSchema, type MemberSummary } from '@madre-pulse/shared';
+import { createClientSchema, type CreateClientInput } from '@madre-pulse/shared';
 import { FormField } from '../../components/form-field';
-import { apiFetch } from '../../lib/api-client';
 
-interface EditMemberModalProps {
-  member: MemberSummary;
+interface AddClientModalProps {
   onClose: () => void;
-  onSaved: (updated: MemberSummary) => void;
+  onSubmit: (input: CreateClientInput) => Promise<void>;
 }
 
-export function EditMemberModal({ member, onClose, onSaved }: EditMemberModalProps) {
-  const [name, setName] = useState(member.name);
-  const [email, setEmail] = useState(member.email);
-  const [designation, setDesignation] = useState(member.designation ?? '');
+export function AddClientModal({ onClose, onSubmit }: AddClientModalProps) {
+  const [name, setName] = useState('');
+  const [website, setWebsite] = useState('');
+  const [location, setLocation] = useState('');
+  const [poc, setPoc] = useState('');
+  const [notes, setNotes] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
 
-    const parsed = updateMemberSchema.safeParse({ name, email, designation: designation || null });
+    const parsed = createClientSchema.safeParse({
+      name,
+      website: website || undefined,
+      location: location || undefined,
+      poc: poc || undefined,
+      notes: notes || undefined,
+    });
     if (!parsed.success) {
       setError(parsed.error.issues[0]?.message ?? 'Please check your input.');
       return;
     }
 
-    setSaving(true);
+    setSubmitting(true);
     try {
-      const updated = await apiFetch<MemberSummary>(`/members/${member.membershipId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(parsed.data),
-      });
-      onSaved(updated);
+      await onSubmit(parsed.data);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save changes.');
+      setError(err instanceof Error ? err.message : 'Failed to add client.');
     } finally {
-      setSaving(false);
+      setSubmitting(false);
     }
   }
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 px-4 py-8 sm:items-center">
-      <div className="w-full max-w-sm rounded-card border border-border bg-surface p-6">
+      <div className="w-full max-w-md rounded-card border border-border bg-surface p-6">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-base font-semibold text-text">Edit team member</h2>
+          <h2 className="text-base font-semibold text-text">Add a client</h2>
           <button
             type="button"
             onClick={onClose}
@@ -64,8 +66,19 @@ export function EditMemberModal({ member, onClose, onSaved }: EditMemberModalPro
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <FormField label="Name" value={name} onChange={setName} autoFocus />
-          <FormField label="Email" type="email" value={email} onChange={setEmail} />
-          <FormField label="Designation (optional)" value={designation} onChange={setDesignation} required={false} />
+          <FormField label="Website (optional)" value={website} onChange={setWebsite} required={false} />
+          <FormField label="Location (optional)" value={location} onChange={setLocation} required={false} />
+          <FormField label="POC (optional)" value={poc} onChange={setPoc} required={false} />
+
+          <label className="flex flex-col gap-1 text-sm text-text">
+            Notes (optional)
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={3}
+              className="rounded-card border border-border bg-surface-alt px-3 py-2 text-sm text-text outline-none focus:border-accent"
+            />
+          </label>
 
           <div className="mt-2 flex items-center justify-end gap-3">
             <button
@@ -77,10 +90,10 @@ export function EditMemberModal({ member, onClose, onSaved }: EditMemberModalPro
             </button>
             <button
               type="submit"
-              disabled={saving}
+              disabled={submitting}
               className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
             >
-              {saving ? 'Saving…' : 'Save changes'}
+              {submitting ? 'Adding…' : 'Add client'}
             </button>
           </div>
         </form>

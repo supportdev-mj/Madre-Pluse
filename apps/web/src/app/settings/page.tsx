@@ -120,9 +120,10 @@ export default function SettingsPage() {
   return (
     <div className="min-h-screen sm:pl-60">
       <AppNav />
-      <main className="mx-auto max-w-2xl px-4 pb-4 pt-16 sm:px-8 sm:pb-8 sm:pt-8">
+      <main className="mx-auto max-w-7xl px-4 pb-4 pt-16 sm:px-8 sm:pb-8 sm:pt-8">
         <h1 className="mb-6 text-xl font-bold text-text">Settings</h1>
 
+        <div className="max-w-2xl">
         <div className="mb-6 rounded-card border border-border bg-surface p-6">
           <h2 className="mb-1 text-base font-semibold text-text">Appearance</h2>
           <p className="mb-4 text-sm text-muted">Choose how Madre Pulse looks on this device.</p>
@@ -243,6 +244,7 @@ export default function SettingsPage() {
             </div>
           </div>
         )}
+        </div>
       </main>
     </div>
   );

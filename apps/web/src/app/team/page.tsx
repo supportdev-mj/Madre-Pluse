@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useState, type FormEvent } from 'react';
-import { createMemberSchema, type MemberSummary, type MembershipStatusName, type RoleName } from '@madre-pulse/shared';
+import { useEffect, useState } from 'react';
+import { type CreateMemberInput, type MemberSummary, type MembershipStatusName, type RoleName } from '@madre-pulse/shared';
 import { AppNav } from '../../components/app-nav';
-import { FormField } from '../../components/form-field';
 import { apiFetch } from '../../lib/api-client';
 import { useRequireAuth } from '../../lib/use-require-auth';
+import { AddMemberModal } from './add-member-modal';
 import { EditMemberModal } from './edit-member-modal';
 
 export default function TeamPage() {
@@ -15,11 +15,7 @@ export default function TeamPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const [email, setEmail] = useState('');
-  const [name, setName] = useState('');
-  const [newRole, setNewRole] = useState<RoleName>('USER');
-  const [submitting, setSubmitting] = useState(false);
-
+  const [showAddModal, setShowAddModal] = useState(false);
   const [editingMember, setEditingMember] = useState<MemberSummary | null>(null);
 
   useEffect(() => {
@@ -30,36 +26,17 @@ export default function TeamPage() {
       .finally(() => setLoading(false));
   }, [status]);
 
-  async function onAddMember(e: FormEvent) {
-    e.preventDefault();
-    setError(null);
+  async function onAddMember(input: CreateMemberInput) {
     setNotice(null);
-
-    const parsed = createMemberSchema.safeParse({ email, name, role: newRole });
-    if (!parsed.success) {
-      setError(parsed.error.issues[0]?.message ?? 'Please check your input.');
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      const result = await apiFetch<{ member: MemberSummary; temporaryPassword?: string }>('/members', {
-        method: 'POST',
-        body: JSON.stringify(parsed.data),
-      });
-      setMembers((prev) => [...prev, result.member]);
-      setEmail('');
-      setName('');
-      setNewRole('USER');
-      if (result.temporaryPassword) {
-        setNotice(`${result.member.name} was added. Temporary password (share this with them securely): ${result.temporaryPassword}`);
-      } else {
-        setNotice(`${result.member.name} already had an account and was added to this organization.`);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add member.');
-    } finally {
-      setSubmitting(false);
+    const result = await apiFetch<{ member: MemberSummary; temporaryPassword?: string }>('/members', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+    setMembers((prev) => [...prev, result.member]);
+    if (result.temporaryPassword) {
+      setNotice(`${result.member.name} was added. Temporary password (share this with them securely): ${result.temporaryPassword}`);
+    } else {
+      setNotice(`${result.member.name} already had an account and was added to this organization.`);
     }
   }
 
@@ -101,8 +78,22 @@ export default function TeamPage() {
   return (
     <div className="min-h-screen sm:pl-60">
       <AppNav />
-      <main className="mx-auto max-w-3xl px-4 pb-4 pt-16 sm:px-8 sm:pb-8 sm:pt-8">
-        <h1 className="mb-6 text-xl font-bold text-text">Team</h1>
+      <main className="mx-auto max-w-7xl px-4 pb-4 pt-16 sm:px-8 sm:pb-8 sm:pt-8">
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+          <h1 className="text-xl font-bold text-text">Team</h1>
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => setShowAddModal(true)}
+              className="flex items-center gap-1.5 rounded-card bg-accent px-4 py-2 text-sm font-medium text-white"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="h-4 w-4">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+              </svg>
+              Team Member
+            </button>
+          )}
+        </div>
 
         {error && <p className="mb-4 text-sm text-red-500">{error}</p>}
         {notice && <p className="mb-4 rounded-card border border-accent bg-surface-alt p-3 text-sm text-text">{notice}</p>}
@@ -110,29 +101,31 @@ export default function TeamPage() {
         {loading ? (
           <p className="text-muted">Loading…</p>
         ) : (
-          <div className="mb-8 overflow-x-auto rounded-card border border-border">
+          <div className="overflow-x-auto rounded-card border border-border">
             <table className="w-full text-left text-sm">
               <thead className="bg-surface-alt text-muted">
                 <tr>
                   <th className="px-4 py-2">Name</th>
+                  <th className="px-4 py-2">Designation</th>
                   <th className="px-4 py-2">Email</th>
                   <th className="px-4 py-2">Role</th>
                   <th className="px-4 py-2">Manager</th>
                   <th className="px-4 py-2">Status</th>
-                  {isAdmin && <th className="px-4 py-2" />}
+                  {isAdmin && <th className="px-4 py-2">Actions</th>}
                 </tr>
               </thead>
               <tbody>
                 {members.map((m) => (
                   <tr key={m.membershipId} className="border-t border-border">
-                    <td className="px-4 py-2 text-text">{m.name}</td>
-                    <td className="px-4 py-2 text-muted">{m.email}</td>
-                    <td className="px-4 py-2 text-text">
+                    <td className="px-4 py-2.5 align-middle text-text">{m.name}</td>
+                    <td className="px-4 py-2.5 align-middle text-muted">{m.designation ?? '—'}</td>
+                    <td className="px-4 py-2.5 align-middle text-muted">{m.email}</td>
+                    <td className="px-4 py-2.5 align-middle text-text">
                       {isAdmin ? (
                         <select
                           value={m.role}
                           onChange={(e) => onUpdateMember(m.membershipId, { role: e.target.value as RoleName })}
-                          className="rounded border border-border bg-surface px-2 py-1 text-sm text-text"
+                          className="rounded-card border border-border bg-surface px-2 py-1 text-sm text-text"
                         >
                           <option value="ADMIN">ADMIN</option>
                           <option value="MANAGER">MANAGER</option>
@@ -142,12 +135,12 @@ export default function TeamPage() {
                         m.role
                       )}
                     </td>
-                    <td className="px-4 py-2 text-text">
+                    <td className="px-4 py-2.5 align-middle text-text">
                       {isAdmin ? (
                         <select
                           value={m.managerId ?? ''}
                           onChange={(e) => onUpdateMember(m.membershipId, { managerId: e.target.value || null })}
-                          className="rounded border border-border bg-surface px-2 py-1 text-sm text-text"
+                          className="rounded-card border border-border bg-surface px-2 py-1 text-sm text-text"
                         >
                           <option value="">None</option>
                           {members
@@ -162,10 +155,20 @@ export default function TeamPage() {
                         (m.managerName ?? '—')
                       )}
                     </td>
-                    <td className="px-4 py-2 text-text">{m.status}</td>
+                    <td className="px-4 py-2.5 align-middle">
+                      <span
+                        className={
+                          m.status === 'ACTIVE'
+                            ? 'rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700'
+                            : 'rounded-full bg-surface-alt px-2 py-0.5 text-xs font-medium text-muted'
+                        }
+                      >
+                        {m.status}
+                      </span>
+                    </td>
                     {isAdmin && (
-                      <td className="px-4 py-2">
-                        <div className="flex items-center gap-3">
+                      <td className="px-4 py-2.5 align-middle">
+                        <div className="flex items-center gap-3 whitespace-nowrap">
                           <button type="button" onClick={() => setEditingMember(m)} className="text-sm text-accent">
                             Edit
                           </button>
@@ -174,7 +177,7 @@ export default function TeamPage() {
                             onClick={() =>
                               onUpdateMember(m.membershipId, { status: m.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE' })
                             }
-                            className="text-sm text-accent"
+                            className={m.status === 'ACTIVE' ? 'text-sm text-red-500' : 'text-sm text-accent'}
                           >
                             {m.status === 'ACTIVE' ? 'Disable' : 'Enable'}
                           </button>
@@ -191,34 +194,7 @@ export default function TeamPage() {
           </div>
         )}
 
-        {isAdmin && (
-          <div className="max-w-sm rounded-card border border-border bg-surface p-6">
-            <h2 className="mb-4 text-base font-semibold text-text">Add a team member</h2>
-            <form onSubmit={onAddMember} className="flex flex-col gap-4">
-              <FormField label="Name" value={name} onChange={setName} />
-              <FormField label="Email" type="email" value={email} onChange={setEmail} />
-              <label className="flex flex-col gap-1 text-sm text-text">
-                Role
-                <select
-                  value={newRole}
-                  onChange={(e) => setNewRole(e.target.value as RoleName)}
-                  className="rounded-card border border-border bg-surface-alt px-3 py-2 text-sm text-text"
-                >
-                  <option value="USER">USER</option>
-                  <option value="MANAGER">MANAGER</option>
-                  <option value="ADMIN">ADMIN</option>
-                </select>
-              </label>
-              <button
-                type="submit"
-                disabled={submitting}
-                className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-              >
-                {submitting ? 'Adding…' : 'Add member'}
-              </button>
-            </form>
-          </div>
-        )}
+        {showAddModal && <AddMemberModal onClose={() => setShowAddModal(false)} onSubmit={onAddMember} />}
 
         {editingMember && (
           <EditMemberModal

@@ -1,9 +1,11 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import {
   createTaskSchema,
+  decideVerificationSchema,
   listTasksQuerySchema,
   updateTaskSchema,
   type CreateTaskInput,
+  type DecideVerificationInput,
   type ListTasksQuery,
   type UpdateTaskInput,
 } from '@madre-pulse/shared';
@@ -41,6 +43,23 @@ export class TasksController {
   @Patch(':id')
   update(@Param('id') id: string, @Body(new ZodValidationPipe(updateTaskSchema)) dto: UpdateTaskInput) {
     return this.tasksService.update(id, dto);
+  }
+
+  @Post(':id/start')
+  startTracking(@Param('id') id: string) {
+    return this.tasksService.startTracking(id);
+  }
+
+  @Post(':id/complete')
+  completeTracking(@Param('id') id: string) {
+    return this.tasksService.completeTracking(id);
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN', 'MANAGER')
+  @Patch(':id/verify')
+  verifyTask(@Param('id') id: string, @Body(new ZodValidationPipe(decideVerificationSchema)) dto: DecideVerificationInput) {
+    return this.tasksService.verifyTask(id, dto);
   }
 
   @UseGuards(RolesGuard)

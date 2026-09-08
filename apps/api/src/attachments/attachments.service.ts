@@ -11,6 +11,7 @@ import { StorageService } from '../storage/storage.service';
 interface AttachmentRecord {
   id: string;
   taskId: string;
+  commentId: string | null;
   fileName: string;
   mimeType: string;
   sizeBytes: number;
@@ -39,10 +40,15 @@ export class AttachmentsService {
     return attachments.map((a) => this.toSummary(a));
   }
 
-  async upload(taskId: string, file: Express.Multer.File): Promise<AttachmentSummary> {
+  async upload(taskId: string, file: Express.Multer.File, commentId?: string): Promise<AttachmentSummary> {
     const orgId = requireOrgId(this.cls);
     await this.getTaskOrThrow(taskId, orgId);
     const uploadedById = this.currentUserId();
+
+    if (commentId) {
+      const comment = await this.prisma.comment.findFirst({ where: { id: commentId, taskId } });
+      if (!comment) throw new NotFoundException('Comment not found on this task');
+    }
 
     const key = `${orgId}/${taskId}/${randomBytes(8).toString('hex')}-${this.sanitizeFileName(file.originalname)}`;
     await this.storage.upload(key, file.buffer, file.mimetype);
@@ -50,6 +56,7 @@ export class AttachmentsService {
     const attachment = await this.prisma.attachment.create({
       data: {
         taskId,
+        commentId: commentId ?? null,
         uploadedById,
         fileName: file.originalname,
         mimeType: file.mimetype,
@@ -112,6 +119,7 @@ export class AttachmentsService {
     return {
       id: a.id,
       taskId: a.taskId,
+      commentId: a.commentId,
       fileName: a.fileName,
       mimeType: a.mimeType,
       sizeBytes: a.sizeBytes,

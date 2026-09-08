@@ -1,14 +1,12 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, UseGuards } from '@nestjs/common';
-import {
-  createTimeEntrySchema,
-  updateTimeEntrySchema,
-  type CreateTimeEntryInput,
-  type UpdateTimeEntryInput,
-} from '@madre-pulse/shared';
+import { Body, Controller, Get, Param, Patch, UseGuards } from '@nestjs/common';
+import { updateTimeEntrySchema, type UpdateTimeEntryInput } from '@madre-pulse/shared';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
 import { TimeEntriesService } from './time-entries.service';
 
+// No POST/DELETE route — entries are only ever produced by TasksService's Start/Complete timer
+// flow, never created directly by a client, and are a permanent log that no one can remove.
+// PATCH remains, for correcting a mistaken note/duration.
 @UseGuards(JwtAuthGuard)
 @Controller('tasks/:taskId/time-entries')
 export class TimeEntriesController {
@@ -19,11 +17,6 @@ export class TimeEntriesController {
     return this.timeEntriesService.list(taskId);
   }
 
-  @Post()
-  create(@Param('taskId') taskId: string, @Body(new ZodValidationPipe(createTimeEntrySchema)) dto: CreateTimeEntryInput) {
-    return this.timeEntriesService.create(taskId, dto);
-  }
-
   @Patch(':id')
   update(
     @Param('taskId') taskId: string,
@@ -31,11 +24,5 @@ export class TimeEntriesController {
     @Body(new ZodValidationPipe(updateTimeEntrySchema)) dto: UpdateTimeEntryInput,
   ) {
     return this.timeEntriesService.update(taskId, id, dto);
-  }
-
-  @Delete(':id')
-  @HttpCode(204)
-  remove(@Param('taskId') taskId: string, @Param('id') id: string) {
-    return this.timeEntriesService.remove(taskId, id);
   }
 }

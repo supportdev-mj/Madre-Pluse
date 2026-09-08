@@ -62,6 +62,7 @@ export type ProjectStatusName = (typeof PROJECT_STATUSES)[number];
 export const createMemberSchema = z.object({
   email: z.string().trim().toLowerCase().email('Enter a valid email address'),
   name: z.string().trim().min(2, 'Name must be at least 2 characters').max(80),
+  designation: z.string().trim().max(120).optional(),
   role: z.enum(ROLES),
 });
 export type CreateMemberInput = z.infer<typeof createMemberSchema>;
@@ -70,6 +71,7 @@ export const updateMemberSchema = z
   .object({
     name: z.string().trim().min(2, 'Name must be at least 2 characters').max(80).optional(),
     email: z.string().trim().toLowerCase().email('Enter a valid email address').optional(),
+    designation: z.string().trim().max(120).nullable().optional(),
     role: z.enum(ROLES).optional(),
     status: z.enum(MEMBERSHIP_STATUSES).optional(),
     managerId: z.string().cuid().nullable().optional(),
@@ -82,6 +84,7 @@ export interface MemberSummary {
   userId: string;
   name: string;
   email: string;
+  designation: string | null;
   initials: string;
   avatarColor: string;
   role: RoleName;
@@ -93,6 +96,9 @@ export interface MemberSummary {
 
 export const createClientSchema = z.object({
   name: z.string().trim().min(1, 'Name is required').max(120),
+  website: z.string().trim().max(200).optional(),
+  location: z.string().trim().max(200).optional(),
+  poc: z.string().trim().max(120).optional(),
   notes: z.string().trim().max(2000).optional(),
 });
 export type CreateClientInput = z.infer<typeof createClientSchema>;
@@ -100,16 +106,20 @@ export type CreateClientInput = z.infer<typeof createClientSchema>;
 export const updateClientSchema = z
   .object({
     name: z.string().trim().min(1, 'Name is required').max(120).optional(),
+    website: z.string().trim().max(200).nullable().optional(),
+    location: z.string().trim().max(200).nullable().optional(),
+    poc: z.string().trim().max(120).nullable().optional(),
     notes: z.string().trim().max(2000).nullable().optional(),
   })
-  .refine((data) => data.name !== undefined || data.notes !== undefined, {
-    message: 'Provide at least one field to update',
-  });
+  .refine((data) => Object.keys(data).length > 0, { message: 'Provide at least one field to update' });
 export type UpdateClientInput = z.infer<typeof updateClientSchema>;
 
 export interface ClientSummary {
   id: string;
   name: string;
+  website: string | null;
+  location: string | null;
+  poc: string | null;
   notes: string | null;
   createdAt: string;
   updatedAt: string;
@@ -145,7 +155,7 @@ export interface ProjectSummary {
 
 // --- Slice 3: Tasks ---
 
-export const TASK_STATUSES = ['TODO', 'IN_PROGRESS', 'DONE'] as const;
+export const TASK_STATUSES = ['TODO', 'IN_PROGRESS', 'TO_VERIFY', 'FAILED', 'DONE'] as const;
 export type TaskStatusName = (typeof TASK_STATUSES)[number];
 
 export const TASK_PRIORITIES = ['LOW', 'MEDIUM', 'HIGH', 'URGENT'] as const;
@@ -177,6 +187,19 @@ export const updateTaskSchema = z
   .refine((data) => Object.keys(data).length > 0, { message: 'Provide at least one field to update' });
 export type UpdateTaskInput = z.infer<typeof updateTaskSchema>;
 
+// Verification: an assignee sends a task from IN_PROGRESS to TO_VERIFY; only ADMIN or the
+// assignee's immediate manager may then decide it — APPROVE (-> DONE), SEND_BACK (-> IN_PROGRESS,
+// more work needed but not a failure), or REJECT (-> FAILED, the assignee must rework and resubmit).
+// A direct PATCH .../tasks/:id can never set status DONE or FAILED — those only ever happen through this.
+export const VERIFICATION_DECISIONS = ['APPROVE', 'SEND_BACK', 'REJECT'] as const;
+export type VerificationDecision = (typeof VERIFICATION_DECISIONS)[number];
+
+export const decideVerificationSchema = z.object({
+  decision: z.enum(VERIFICATION_DECISIONS),
+  reviewNote: z.string().trim().max(1000).optional(),
+});
+export type DecideVerificationInput = z.infer<typeof decideVerificationSchema>;
+
 export const listTasksQuerySchema = z.object({
   status: z.enum(TASK_STATUSES).optional(),
   priority: z.enum(TASK_PRIORITIES).optional(),
@@ -185,11 +208,22 @@ export const listTasksQuerySchema = z.object({
 });
 export type ListTasksQuery = z.infer<typeof listTasksQuerySchema>;
 
-export interface TaskAssigneeSummary {
+export const ASSIGNMENT_STATUSES = ['NOT_STARTED', 'IN_PROGRESS', 'COMPLETED'] as const;
+export type AssignmentStatusName = (typeof ASSIGNMENT_STATUSES)[number];
+
+/** Just a person reference (name/initials/avatar) — used anywhere a user is shown but isn't a
+ * task-tracking participant, e.g. a subtask's owner or a comment's author. */
+export interface PersonSummary {
   userId: string;
   name: string;
   initials: string;
   avatarColor: string;
+}
+
+export interface TaskAssigneeSummary extends PersonSummary {
+  personalStatus: AssignmentStatusName;
+  activeStartedAt: string | null;
+  completedAt: string | null;
 }
 
 export interface TaskSummary {
@@ -204,6 +238,9 @@ export interface TaskSummary {
   clientId: string | null;
   clientName: string | null;
   assignees: TaskAssigneeSummary[];
+  /** True if the current user may approve/send-back this task from To Verify — an ADMIN, or the
+   * immediate manager of at least one assignee. Always false unless status is TO_VERIFY. */
+  canVerify: boolean;
   createdById: string;
   createdByName: string;
   createdAt: string;
@@ -232,7 +269,7 @@ export interface SubtaskSummary {
   taskId: string;
   title: string;
   done: boolean;
-  assignee: TaskAssigneeSummary | null;
+  assignee: PersonSummary | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -251,8 +288,11 @@ export interface DependencySummary {
 
 // --- Slice 7: Comments, Attachments, Activity feed ---
 
+// body is optional — a chat message can be file/voice-note-only with no text. The frontend still
+// requires at least one of {text, attachment} before allowing Send; this schema alone doesn't
+// enforce that cross-field rule since attachments upload as a separate follow-up request.
 export const createCommentSchema = z.object({
-  body: z.string().trim().min(1, 'Comment cannot be empty').max(4000),
+  body: z.string().trim().max(4000).optional(),
 });
 export type CreateCommentInput = z.infer<typeof createCommentSchema>;
 
@@ -263,7 +303,8 @@ export interface CommentSummary {
   authorName: string;
   authorInitials: string;
   authorAvatarColor: string;
-  body: string;
+  body: string | null;
+  attachments: AttachmentSummary[];
   createdAt: string;
   updatedAt: string;
 }
@@ -271,6 +312,7 @@ export interface CommentSummary {
 export interface AttachmentSummary {
   id: string;
   taskId: string;
+  commentId: string | null;
   fileName: string;
   mimeType: string;
   sizeBytes: number;
@@ -301,13 +343,9 @@ export interface TaskActivitySummary {
 
 const MAX_ENTRY_MINUTES = 1440;
 
-export const createTimeEntrySchema = z.object({
-  minutes: z.number().int().min(1, 'Must log at least 1 minute').max(MAX_ENTRY_MINUTES, 'A single entry cannot exceed 24 hours'),
-  note: z.string().trim().max(500).optional(),
-  date: z.coerce.date().optional(),
-});
-export type CreateTimeEntryInput = z.infer<typeof createTimeEntrySchema>;
-
+// No create schema — entries are only ever produced by the Start/Complete timer (TasksService),
+// never typed in manually. updateTimeEntrySchema still exists for corrections (e.g. someone left
+// the timer running overnight by mistake).
 export const updateTimeEntrySchema = z
   .object({
     minutes: z.number().int().min(1).max(MAX_ENTRY_MINUTES).optional(),
@@ -325,6 +363,8 @@ export interface TimeEntrySummary {
   minutes: number;
   note: string | null;
   date: string;
+  startedAt: string | null;
+  endedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -340,6 +380,10 @@ export const NOTIFICATION_TYPES = [
   'REOPEN_REJECTED',
   'BLOCKER_REPORTED',
   'BLOCKER_RESOLVED',
+  'TASK_VERIFICATION_REQUESTED',
+  'TASK_VERIFIED',
+  'TASK_SENT_BACK',
+  'TASK_VERIFICATION_REJECTED',
 ] as const;
 export type NotificationTypeName = (typeof NOTIFICATION_TYPES)[number];
 

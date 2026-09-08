@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useState, type FormEvent } from 'react';
-import { createProjectSchema, type ClientSummary, type ProjectSummary } from '@madre-pulse/shared';
+import { useEffect, useState } from 'react';
+import { type ClientSummary, type CreateProjectInput, type ProjectSummary } from '@madre-pulse/shared';
 import { AppNav } from '../../components/app-nav';
-import { FormField } from '../../components/form-field';
 import { apiFetch } from '../../lib/api-client';
 import { useRequireAuth } from '../../lib/use-require-auth';
+import { AddProjectModal } from './add-project-modal';
+import { EditProjectModal } from './edit-project-modal';
 
 export default function ProjectsPage() {
   const { status, role } = useRequireAuth();
@@ -14,10 +15,8 @@ export default function ProjectsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [clientId, setClientId] = useState('');
-  const [submitting, setSubmitting] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [editingProject, setEditingProject] = useState<ProjectSummary | null>(null);
 
   useEffect(() => {
     if (status !== 'authenticated') return;
@@ -30,32 +29,9 @@ export default function ProjectsPage() {
       .finally(() => setLoading(false));
   }, [status]);
 
-  async function onAddProject(e: FormEvent) {
-    e.preventDefault();
-    setError(null);
-
-    const parsed = createProjectSchema.safeParse({
-      name,
-      description: description || undefined,
-      clientId: clientId || undefined,
-    });
-    if (!parsed.success) {
-      setError(parsed.error.issues[0]?.message ?? 'Please check your input.');
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      const project = await apiFetch<ProjectSummary>('/projects', { method: 'POST', body: JSON.stringify(parsed.data) });
-      setProjects((prev) => [project, ...prev]);
-      setName('');
-      setDescription('');
-      setClientId('');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add project.');
-    } finally {
-      setSubmitting(false);
-    }
+  async function onAddProject(input: CreateProjectInput) {
+    const project = await apiFetch<ProjectSummary>('/projects', { method: 'POST', body: JSON.stringify(input) });
+    setProjects((prev) => [project, ...prev]);
   }
 
   async function onToggleArchive(project: ProjectSummary) {
@@ -79,37 +55,72 @@ export default function ProjectsPage() {
   return (
     <div className="min-h-screen sm:pl-60">
       <AppNav />
-      <main className="mx-auto max-w-3xl px-4 pb-4 pt-16 sm:px-8 sm:pb-8 sm:pt-8">
-        <h1 className="mb-6 text-xl font-bold text-text">Projects</h1>
+      <main className="mx-auto max-w-7xl px-4 pb-4 pt-16 sm:px-8 sm:pb-8 sm:pt-8">
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+          <h1 className="text-xl font-bold text-text">Projects</h1>
+          {canManage && (
+            <button
+              type="button"
+              onClick={() => setShowAddModal(true)}
+              className="flex items-center gap-1.5 rounded-card bg-accent px-4 py-2 text-sm font-medium text-white"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="h-4 w-4">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+              </svg>
+              Project
+            </button>
+          )}
+        </div>
 
         {error && <p className="mb-4 text-sm text-red-500">{error}</p>}
 
         {loading ? (
           <p className="text-muted">Loading…</p>
         ) : projects.length === 0 ? (
-          <p className="mb-8 text-sm text-muted">No projects yet.</p>
+          <p className="text-sm text-muted">No projects yet.</p>
         ) : (
-          <div className="mb-8 overflow-x-auto rounded-card border border-border">
+          <div className="overflow-x-auto rounded-card border border-border">
             <table className="w-full text-left text-sm">
               <thead className="bg-surface-alt text-muted">
                 <tr>
                   <th className="px-4 py-2">Name</th>
+                  <th className="px-4 py-2">Description</th>
                   <th className="px-4 py-2">Client</th>
                   <th className="px-4 py-2">Status</th>
-                  {canManage && <th className="px-4 py-2" />}
+                  {canManage && <th className="px-4 py-2">Actions</th>}
                 </tr>
               </thead>
               <tbody>
                 {projects.map((p) => (
                   <tr key={p.id} className="border-t border-border">
-                    <td className="px-4 py-2 text-text">{p.name}</td>
-                    <td className="px-4 py-2 text-muted">{p.clientName ?? '—'}</td>
-                    <td className="px-4 py-2 text-text">{p.status}</td>
+                    <td className="px-4 py-2.5 align-middle font-medium text-text">{p.name}</td>
+                    <td className="px-4 py-2.5 align-middle text-muted">{p.description ?? '—'}</td>
+                    <td className="px-4 py-2.5 align-middle text-muted">{p.clientName ?? '—'}</td>
+                    <td className="px-4 py-2.5 align-middle">
+                      <span
+                        className={
+                          p.status === 'ACTIVE'
+                            ? 'rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700'
+                            : 'rounded-full bg-surface-alt px-2 py-0.5 text-xs font-medium text-muted'
+                        }
+                      >
+                        {p.status}
+                      </span>
+                    </td>
                     {canManage && (
-                      <td className="px-4 py-2">
-                        <button type="button" onClick={() => onToggleArchive(p)} className="text-sm text-accent">
-                          {p.status === 'ACTIVE' ? 'Archive' : 'Reactivate'}
-                        </button>
+                      <td className="px-4 py-2.5 align-middle">
+                        <div className="flex items-center gap-3 whitespace-nowrap">
+                          <button type="button" onClick={() => setEditingProject(p)} className="text-sm text-accent">
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onToggleArchive(p)}
+                            className={p.status === 'ACTIVE' ? 'text-sm text-red-500' : 'text-sm text-accent'}
+                          >
+                            {p.status === 'ACTIVE' ? 'Archive' : 'Reactivate'}
+                          </button>
+                        </div>
                       </td>
                     )}
                   </tr>
@@ -119,36 +130,17 @@ export default function ProjectsPage() {
           </div>
         )}
 
-        {canManage && (
-          <div className="max-w-sm rounded-card border border-border bg-surface p-6">
-            <h2 className="mb-4 text-base font-semibold text-text">Add a project</h2>
-            <form onSubmit={onAddProject} className="flex flex-col gap-4">
-              <FormField label="Name" value={name} onChange={setName} />
-              <FormField label="Description (optional)" value={description} onChange={setDescription} required={false} />
-              <label className="flex flex-col gap-1 text-sm text-text">
-                Client (optional)
-                <select
-                  value={clientId}
-                  onChange={(e) => setClientId(e.target.value)}
-                  className="rounded-card border border-border bg-surface-alt px-3 py-2 text-sm text-text"
-                >
-                  <option value="">No client</option>
-                  {clients.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <button
-                type="submit"
-                disabled={submitting}
-                className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-              >
-                {submitting ? 'Adding…' : 'Add project'}
-              </button>
-            </form>
-          </div>
+        {showAddModal && (
+          <AddProjectModal clients={clients} onClose={() => setShowAddModal(false)} onSubmit={onAddProject} />
+        )}
+
+        {editingProject && (
+          <EditProjectModal
+            project={editingProject}
+            clients={clients}
+            onClose={() => setEditingProject(null)}
+            onSaved={(updated) => setProjects((prev) => prev.map((p) => (p.id === updated.id ? updated : p)))}
+          />
         )}
       </main>
     </div>

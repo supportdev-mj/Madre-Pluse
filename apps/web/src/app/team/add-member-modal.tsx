@@ -1,53 +1,50 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
-import { updateMemberSchema, type MemberSummary } from '@madre-pulse/shared';
+import { createMemberSchema, type CreateMemberInput, type RoleName } from '@madre-pulse/shared';
 import { FormField } from '../../components/form-field';
-import { apiFetch } from '../../lib/api-client';
 
-interface EditMemberModalProps {
-  member: MemberSummary;
+const ROLE_OPTIONS: RoleName[] = ['USER', 'MANAGER', 'ADMIN'];
+
+interface AddMemberModalProps {
   onClose: () => void;
-  onSaved: (updated: MemberSummary) => void;
+  onSubmit: (input: CreateMemberInput) => Promise<void>;
 }
 
-export function EditMemberModal({ member, onClose, onSaved }: EditMemberModalProps) {
-  const [name, setName] = useState(member.name);
-  const [email, setEmail] = useState(member.email);
-  const [designation, setDesignation] = useState(member.designation ?? '');
+export function AddMemberModal({ onClose, onSubmit }: AddMemberModalProps) {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [designation, setDesignation] = useState('');
+  const [role, setRole] = useState<RoleName>('USER');
   const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
 
-    const parsed = updateMemberSchema.safeParse({ name, email, designation: designation || null });
+    const parsed = createMemberSchema.safeParse({ name, email, designation: designation || undefined, role });
     if (!parsed.success) {
       setError(parsed.error.issues[0]?.message ?? 'Please check your input.');
       return;
     }
 
-    setSaving(true);
+    setSubmitting(true);
     try {
-      const updated = await apiFetch<MemberSummary>(`/members/${member.membershipId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(parsed.data),
-      });
-      onSaved(updated);
+      await onSubmit(parsed.data);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save changes.');
+      setError(err instanceof Error ? err.message : 'Failed to add team member.');
     } finally {
-      setSaving(false);
+      setSubmitting(false);
     }
   }
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 px-4 py-8 sm:items-center">
-      <div className="w-full max-w-sm rounded-card border border-border bg-surface p-6">
+      <div className="w-full max-w-md rounded-card border border-border bg-surface p-6">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-base font-semibold text-text">Edit team member</h2>
+          <h2 className="text-base font-semibold text-text">Add a team member</h2>
           <button
             type="button"
             onClick={onClose}
@@ -67,6 +64,21 @@ export function EditMemberModal({ member, onClose, onSaved }: EditMemberModalPro
           <FormField label="Email" type="email" value={email} onChange={setEmail} />
           <FormField label="Designation (optional)" value={designation} onChange={setDesignation} required={false} />
 
+          <label className="flex flex-col gap-1 text-sm text-text">
+            Role
+            <select
+              value={role}
+              onChange={(e) => setRole(e.target.value as RoleName)}
+              className="rounded-card border border-border bg-surface-alt px-3 py-2 text-sm text-text"
+            >
+              {ROLE_OPTIONS.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
+          </label>
+
           <div className="mt-2 flex items-center justify-end gap-3">
             <button
               type="button"
@@ -77,10 +89,10 @@ export function EditMemberModal({ member, onClose, onSaved }: EditMemberModalPro
             </button>
             <button
               type="submit"
-              disabled={saving}
+              disabled={submitting}
               className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
             >
-              {saving ? 'Saving…' : 'Save changes'}
+              {submitting ? 'Adding…' : 'Add member'}
             </button>
           </div>
         </form>

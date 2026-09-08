@@ -16,7 +16,7 @@ interface MembershipWithUser {
   status: string;
   managerId: string | null;
   createdAt: Date;
-  user: { id: string; name: string; email: string; initials: string; avatarColor: string };
+  user: { id: string; name: string; email: string; designation: string | null; initials: string; avatarColor: string };
   manager?: { user: { name: string } } | null;
 }
 
@@ -55,7 +55,13 @@ export class MembersService {
       const membership = await this.prisma.membership.create({
         data: { userId: existingUser.id, orgId, role: input.role, status: 'ACTIVE' },
       });
-      return { member: this.toSummary({ ...membership, user: existingUser, manager: null }) };
+      // designation lives on User (shared across orgs), not Membership — only touch it if the
+      // inviter actually provided one, so joining a second org never silently blanks it out.
+      const user =
+        input.designation !== undefined
+          ? await this.prisma.user.update({ where: { id: existingUser.id }, data: { designation: input.designation } })
+          : existingUser;
+      return { member: this.toSummary({ ...membership, user, manager: null }) };
     }
 
     const temporaryPassword = generateTempPassword();
@@ -65,7 +71,7 @@ export class MembersService {
 
     const { user, membership } = await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
-        data: { email, passwordHash, name: input.name, initials, avatarColor },
+        data: { email, passwordHash, name: input.name, designation: input.designation ?? null, initials, avatarColor },
       });
       const membership = await tx.membership.create({
         data: { userId: user.id, orgId, role: input.role, status: 'ACTIVE' },
@@ -110,12 +116,13 @@ export class MembersService {
     }
 
     const updated = await this.prisma.$transaction(async (tx) => {
-      if (input.name !== undefined || input.email !== undefined) {
+      if (input.name !== undefined || input.email !== undefined || input.designation !== undefined) {
         await tx.user.update({
           where: { id: membership.userId },
           data: {
             name: input.name,
             email: input.email?.toLowerCase(),
+            designation: input.designation,
             initials: input.name ? deriveInitials(input.name) : undefined,
           },
         });
@@ -174,6 +181,7 @@ export class MembersService {
       userId: m.user.id,
       name: m.user.name,
       email: m.user.email,
+      designation: m.user.designation,
       initials: m.user.initials,
       avatarColor: m.user.avatarColor,
       role: m.role as RoleName,

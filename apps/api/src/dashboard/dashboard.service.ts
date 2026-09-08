@@ -52,7 +52,7 @@ export class DashboardService {
         }),
       ]);
 
-    const statusCounts: Record<TaskStatusName, number> = { TODO: 0, IN_PROGRESS: 0, DONE: 0 };
+    const statusCounts: Record<TaskStatusName, number> = { TODO: 0, IN_PROGRESS: 0, TO_VERIFY: 0, FAILED: 0, DONE: 0 };
     for (const group of statusGroups) {
       statusCounts[group.status as TaskStatusName] = group._count;
     }

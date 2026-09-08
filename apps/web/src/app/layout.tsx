@@ -21,7 +21,7 @@ const themeInitScript = `(function () {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body className="min-h-screen font-sans antialiased">
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
         <ThemeProvider>

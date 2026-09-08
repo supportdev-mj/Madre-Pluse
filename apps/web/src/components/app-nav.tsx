@@ -100,7 +100,7 @@ const links: Array<{ href: string; label: string; roles?: RoleName[] }> = [
 const superAdminLinks = [{ href: '/admin', label: 'Platform' }];
 
 export function AppNav() {
-  const { org, role, user, logout } = useAuth();
+  const { role, user, logout } = useAuth();
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const visibleLinks = [
@@ -111,7 +111,8 @@ export function AppNav() {
   const sidebarBody = (
     <div className="flex h-full w-60 flex-col bg-surface p-4">
       <div className="mb-6 px-2">
-        <span className="text-base font-bold text-text">{org?.name ?? 'Madre Pulse'}</span>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/logo.png" alt="Madre Pulse" className="h-11 w-auto rounded-md dark:bg-white dark:p-1" />
       </div>
 
       <nav className="flex flex-1 flex-col gap-1">
@@ -136,7 +137,7 @@ export function AppNav() {
       </nav>
 
       <div className="mt-4 flex items-center gap-2 border-t border-border pt-4">
-        <NotificationBell />
+        <NotificationBell openDirection="up" align="left" />
         <button
           type="button"
           onClick={() => logout()}
@@ -170,7 +171,8 @@ export function AppNav() {
             <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5M3.75 17.25h16.5" />
           </svg>
         </button>
-        <span className="font-bold text-text">{org?.name ?? 'Madre Pulse'}</span>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/logo.png" alt="Madre Pulse" className="h-8 w-auto rounded dark:bg-white dark:p-1" />
         <NotificationBell />
       </div>
 
