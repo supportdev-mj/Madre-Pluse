@@ -149,8 +149,13 @@ export class MomService {
 
   async listCandidates(query: ListMomCandidatesQuery): Promise<MomTaskCandidateSummary[]> {
     const orgId = requireOrgId(this.cls);
+    const isManagerOrAdmin = this.isManagerOrAdmin();
     const candidates = await this.prisma.momTaskCandidate.findMany({
-      where: { orgId, status: query.status ?? 'PENDING' },
+      where: {
+        orgId,
+        status: query.status ?? 'PENDING',
+        ...(isManagerOrAdmin ? {} : { suggestedAssigneeId: this.currentUserId() }),
+      },
       include: CANDIDATE_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
@@ -161,6 +166,7 @@ export class MomService {
     const orgId = requireOrgId(this.cls);
     const existing = await this.prisma.momTaskCandidate.findFirst({ where: { id, orgId } });
     if (!existing) throw new NotFoundException('Queued item not found');
+    this.assertCanReview(existing);
     if (existing.status !== 'PENDING') {
       throw new BadRequestException('This item has already been reviewed and can no longer be edited');
     }
@@ -186,6 +192,7 @@ export class MomService {
     const reviewerId = this.currentUserId();
     const existing = await this.prisma.momTaskCandidate.findFirst({ where: { id, orgId } });
     if (!existing) throw new NotFoundException('Queued item not found');
+    this.assertCanReview(existing);
     if (existing.status !== 'PENDING') {
       throw new BadRequestException('This item has already been reviewed');
     }
@@ -216,6 +223,7 @@ export class MomService {
     const reviewerId = this.currentUserId();
     const existing = await this.prisma.momTaskCandidate.findFirst({ where: { id, orgId } });
     if (!existing) throw new NotFoundException('Queued item not found');
+    this.assertCanReview(existing);
     if (existing.status !== 'PENDING') {
       throw new BadRequestException('This item has already been reviewed');
     }
@@ -290,6 +298,18 @@ export class MomService {
     const userId = this.cls.get('userId');
     if (!userId) throw new ForbiddenException();
     return userId;
+  }
+
+  private isManagerOrAdmin(): boolean {
+    const role = this.cls.get('role');
+    return role === 'ADMIN' || role === 'MANAGER';
+  }
+
+  /** ADMIN/MANAGER may review any candidate; anyone else only the one the AI matched to them. */
+  private assertCanReview(candidate: { suggestedAssigneeId: string | null }): void {
+    if (this.isManagerOrAdmin()) return;
+    if (candidate.suggestedAssigneeId && candidate.suggestedAssigneeId === this.currentUserId()) return;
+    throw new ForbiddenException('You can only act on MOM items assigned to you');
   }
 
   private async assertActiveMemberOfOrg(userId: string, orgId: string): Promise<void> {

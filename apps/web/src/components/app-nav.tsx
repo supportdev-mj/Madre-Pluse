@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
+import type { RoleName } from '@madre-pulse/shared';
 import { NotificationBell } from './notification-bell';
 import { useAuth } from '../lib/auth-context';
 
@@ -85,38 +86,33 @@ function NavIcon({ label }: { label: string }) {
   );
 }
 
-const links = [
+const links: Array<{ href: string; label: string; roles?: RoleName[] }> = [
+  { href: '/dashboard', label: 'Dashboard', roles: ['ADMIN', 'MANAGER'] },
   { href: '/tasks', label: 'Tasks' },
   { href: '/team', label: 'Team' },
   { href: '/clients', label: 'Clients' },
   { href: '/projects', label: 'Projects' },
-];
-
-const managerLinks = [
-  { href: '/dashboard', label: 'Dashboard' },
-  { href: '/reports', label: 'Reports' },
   { href: '/mom', label: 'MOM' },
+  { href: '/reports', label: 'Reports', roles: ['ADMIN', 'MANAGER'] },
+  { href: '/settings', label: 'Settings' },
 ];
-
-const adminLinks = [{ href: '/settings', label: 'Settings' }];
 
 const superAdminLinks = [{ href: '/admin', label: 'Platform' }];
 
 export function AppNav() {
-  const { org, role, user, logout } = useAuth();
+  const { role, user, logout } = useAuth();
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const visibleLinks = [
-    ...links,
-    ...(role === 'ADMIN' || role === 'MANAGER' ? managerLinks : []),
-    ...(role === 'ADMIN' ? adminLinks : []),
+    ...links.filter((l) => !l.roles || (role && l.roles.includes(role))),
     ...(user?.isSuperAdmin ? superAdminLinks : []),
   ];
 
   const sidebarBody = (
     <div className="flex h-full w-60 flex-col bg-surface p-4">
       <div className="mb-6 px-2">
-        <span className="text-base font-bold text-text">{org?.name ?? 'Madre Pulse'}</span>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/logo.png" alt="Madre Pulse" className="h-11 w-auto rounded-md dark:bg-white dark:p-1" />
       </div>
 
       <nav className="flex flex-1 flex-col gap-1">
@@ -141,7 +137,7 @@ export function AppNav() {
       </nav>
 
       <div className="mt-4 flex items-center gap-2 border-t border-border pt-4">
-        <NotificationBell />
+        <NotificationBell openDirection="up" align="left" />
         <button
           type="button"
           onClick={() => logout()}
@@ -175,7 +171,8 @@ export function AppNav() {
             <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5M3.75 17.25h16.5" />
           </svg>
         </button>
-        <span className="font-bold text-text">{org?.name ?? 'Madre Pulse'}</span>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/logo.png" alt="Madre Pulse" className="h-8 w-auto rounded dark:bg-white dark:p-1" />
         <NotificationBell />
       </div>
 

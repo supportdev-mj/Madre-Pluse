@@ -6,6 +6,8 @@ import { TASK_STATUSES, type TaskStatusName, type TaskSummary } from '@madre-pul
 const STATUS_LABELS: Record<TaskStatusName, string> = {
   TODO: 'To Do',
   IN_PROGRESS: 'In Progress',
+  TO_VERIFY: 'To Verify',
+  FAILED: 'Failed',
   DONE: 'Done',
 };
 
@@ -29,6 +31,8 @@ export function TaskBoardView({ tasks, canEditTask, onStatusChange }: TaskBoardV
     const { active, over } = event;
     if (!over) return;
     const nextStatus = over.id as TaskStatusName;
+    // Done and Failed are only reachable via manager verification (see the task detail page), never a drag.
+    if (nextStatus === 'DONE' || nextStatus === 'FAILED') return;
     const task = tasks.find((t) => t.id === active.id);
     if (!task || task.status === nextStatus) return;
     onStatusChange(task, nextStatus);
@@ -36,7 +40,7 @@ export function TaskBoardView({ tasks, canEditTask, onStatusChange }: TaskBoardV
 
   return (
     <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
         {TASK_STATUSES.map((status) => (
           <BoardColumn
             key={status}
@@ -59,7 +63,9 @@ function BoardColumn({
   tasks: TaskSummary[];
   canEditTask: (task: TaskSummary) => boolean;
 }) {
-  const { setNodeRef, isOver } = useDroppable({ id: status });
+  // Done and Failed are only reachable via manager verification (see the task detail page), so
+  // these columns never accept a drop.
+  const { setNodeRef, isOver } = useDroppable({ id: status, disabled: status === 'DONE' || status === 'FAILED' });
 
   return (
     <div

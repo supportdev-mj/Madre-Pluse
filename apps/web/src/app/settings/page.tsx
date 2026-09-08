@@ -4,7 +4,6 @@ import { useEffect, useState, type FormEvent } from 'react';
 import {
   updateMomAiSettingsSchema,
   updateOrganizationSchema,
-  type GoogleIntegrationStatus,
   type MomAiSettingsStatus,
   type OrganizationSummary,
 } from '@madre-pulse/shared';
@@ -32,12 +31,6 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  const [google, setGoogle] = useState<GoogleIntegrationStatus | null>(null);
-  const [googleLoading, setGoogleLoading] = useState(true);
-  const [googleNotice, setGoogleNotice] = useState<string | null>(null);
-  const [connecting, setConnecting] = useState(false);
-  const [disconnecting, setDisconnecting] = useState(false);
-
   const [momAi, setMomAi] = useState<MomAiSettingsStatus | null>(null);
   const [momAiLoading, setMomAiLoading] = useState(true);
   const [momApiKey, setMomApiKey] = useState('');
@@ -46,13 +39,6 @@ export default function SettingsPage() {
   const [momAiSaved, setMomAiSaved] = useState(false);
 
   const canView = role === 'ADMIN';
-
-  function loadGoogleStatus() {
-    return apiFetch<GoogleIntegrationStatus>('/integrations/google/status')
-      .then(setGoogle)
-      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load Google integration status'))
-      .finally(() => setGoogleLoading(false));
-  }
 
   function loadMomAiStatus() {
     return apiFetch<MomAiSettingsStatus>('/mom/settings')
@@ -70,47 +56,9 @@ export default function SettingsPage() {
       })
       .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load organization'))
       .finally(() => setLoading(false));
-    loadGoogleStatus();
     loadMomAiStatus();
-
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('google') === 'connected') {
-      setGoogleNotice('Google Workspace connected.');
-    } else if (params.get('google') === 'error') {
-      setGoogleNotice('Failed to connect Google Workspace — please try again.');
-    }
-    if (params.has('google')) {
-      window.history.replaceState(null, '', window.location.pathname);
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, canView]);
-
-  async function onConnectGoogle() {
-    setError(null);
-    setConnecting(true);
-    try {
-      const { url } = await apiFetch<{ url: string }>('/integrations/google/connect-url');
-      window.location.href = url;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to start Google connection.');
-      setConnecting(false);
-    }
-  }
-
-  async function onDisconnectGoogle() {
-    if (!window.confirm('Disconnect Google Workspace? Meeting transcript syncing will stop.')) return;
-    setError(null);
-    setDisconnecting(true);
-    try {
-      await apiFetch('/integrations/google', { method: 'DELETE' });
-      await loadGoogleStatus();
-      setGoogleNotice(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to disconnect Google Workspace.');
-    } finally {
-      setDisconnecting(false);
-    }
-  }
 
   async function onSaveMomAi(e: FormEvent) {
     e.preventDefault();
@@ -172,9 +120,10 @@ export default function SettingsPage() {
   return (
     <div className="min-h-screen sm:pl-60">
       <AppNav />
-      <main className="mx-auto max-w-2xl px-4 pb-4 pt-16 sm:px-8 sm:pb-8 sm:pt-8">
+      <main className="mx-auto max-w-7xl px-4 pb-4 pt-16 sm:px-8 sm:pb-8 sm:pt-8">
         <h1 className="mb-6 text-xl font-bold text-text">Settings</h1>
 
+        <div className="max-w-2xl">
         <div className="mb-6 rounded-card border border-border bg-surface p-6">
           <h2 className="mb-1 text-base font-semibold text-text">Appearance</h2>
           <p className="mb-4 text-sm text-muted">Choose how Madre Pulse looks on this device.</p>
@@ -251,44 +200,6 @@ export default function SettingsPage() {
             </div>
 
             <div className="rounded-card border border-border bg-surface p-6">
-              <h2 className="mb-1 text-base font-semibold text-text">Meeting integrations</h2>
-              <p className="mb-4 text-sm text-muted">
-                Connect Google Workspace so Madre Pulse can pull Google Meet transcripts and turn them into meeting
-                minutes and draft tasks.
-              </p>
-              {googleNotice && (
-                <p className="mb-4 rounded-card border border-accent bg-surface-alt p-3 text-sm text-text">{googleNotice}</p>
-              )}
-              {googleLoading ? (
-                <p className="text-sm text-muted">Loading…</p>
-              ) : google?.connected ? (
-                <div className="flex items-center justify-between rounded-card border border-border bg-surface-alt p-3">
-                  <div>
-                    <p className="text-sm font-medium text-text">Connected</p>
-                    <p className="text-xs text-muted">{google.googleEmail}</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={onDisconnectGoogle}
-                    disabled={disconnecting}
-                    className="text-sm text-red-500 disabled:opacity-50"
-                  >
-                    {disconnecting ? 'Disconnecting…' : 'Disconnect'}
-                  </button>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={onConnectGoogle}
-                  disabled={connecting}
-                  className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                >
-                  {connecting ? 'Redirecting…' : 'Connect Google Workspace'}
-                </button>
-              )}
-            </div>
-
-            <div className="rounded-card border border-border bg-surface p-6">
               <h2 className="mb-1 text-base font-semibold text-text">AI provider (MOM extraction)</h2>
               <p className="mb-4 text-sm text-muted">
                 Add your organization&apos;s Anthropic API key so the MOM page can read uploaded meeting-minutes
@@ -333,6 +244,7 @@ export default function SettingsPage() {
             </div>
           </div>
         )}
+        </div>
       </main>
     </div>
   );

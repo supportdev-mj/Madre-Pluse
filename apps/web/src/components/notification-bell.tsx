@@ -16,7 +16,16 @@ function timeAgo(iso: string): string {
   return `${days}d ago`;
 }
 
-export function NotificationBell() {
+interface NotificationBellProps {
+  /** The trigger's position on screen determines which way the panel has room to open.
+   * 'down' (default) suits a top-anchored trigger; 'up' suits a bottom-anchored one. */
+  openDirection?: 'down' | 'up';
+  /** Which side of the trigger the panel hangs from. 'right' (default) suits a trigger near the
+   * right edge of the screen (room to its left); 'left' suits one near the left edge (room to its right). */
+  align?: 'right' | 'left';
+}
+
+export function NotificationBell({ openDirection = 'down', align = 'right' }: NotificationBellProps) {
   const { notifications, unreadCount, markRead, markAllRead } = useNotifications();
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -59,7 +68,11 @@ export function NotificationBell() {
       </button>
 
       {open && (
-        <div className="absolute right-0 z-10 mt-2 w-80 max-w-[90vw] rounded-xl border border-border bg-surface p-1.5 shadow-lg">
+        <div
+          className={`absolute z-10 w-80 max-w-[90vw] rounded-xl border border-border bg-surface p-1.5 shadow-lg ${
+            openDirection === 'up' ? 'bottom-full mb-2' : 'mt-2'
+          } ${align === 'left' ? 'left-0' : 'right-0'}`}
+        >
           <div className="flex items-center justify-between px-2.5 py-2">
             <span className="text-sm font-bold text-text">Notifications</span>
             {unreadCount > 0 && (

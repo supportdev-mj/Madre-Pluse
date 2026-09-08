@@ -46,7 +46,18 @@ enum ProjectStatus {
 enum TaskStatus {
   TODO
   IN_PROGRESS
+  TO_VERIFY
+  FAILED
   DONE
+}
+
+// Per-assignee personal progress on a shared task — independent of the task's own status.
+// Starting is one-shot-per-session but re-startable (NOT_STARTED -> IN_PROGRESS -> COMPLETED,
+// and COMPLETED -> IN_PROGRESS again is allowed, to log more time in a later session).
+enum AssignmentStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
 }
 
 enum TaskPriority {
@@ -65,6 +76,10 @@ enum NotificationType {
   REOPEN_REJECTED
   BLOCKER_REPORTED
   BLOCKER_RESOLVED
+  TASK_VERIFICATION_REQUESTED
+  TASK_VERIFIED
+  TASK_SENT_BACK
+  TASK_VERIFICATION_REJECTED
 }
 
 enum ReopenRequestStatus {
@@ -121,6 +136,7 @@ model User {
   email        String   @unique
   passwordHash String
   name         String
+  designation  String?
   initials     String
   avatarColor  String
   isSuperAdmin Boolean  @default(false)
@@ -132,6 +148,7 @@ model User {
   taskAssignments        TaskAssignment[]
   subtaskAssignments     Subtask[]           @relation("SubtaskAssignee")
   createdTasks           Task[]              @relation("TaskCreator")
+  verifiedTasks          Task[]              @relation("TaskVerifier")
   comments               Comment[]
   attachments            Attachment[]
   taskActivities         TaskActivity[]
@@ -195,6 +212,9 @@ model Client {
   id        String   @id @default(cuid())
   orgId     String
   name      String
+  website   String?
+  location  String?
+  poc       String?
   notes     String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -234,6 +254,7 @@ model Task {
   projectId   String?
   clientId    String?
   createdById String
+  verifiedById String?
   title       String
   description String?
   status      TaskStatus   @default(TODO)
@@ -243,10 +264,11 @@ model Task {
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 
-  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  project   Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  client    Client?      @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  createdBy User         @relation("TaskCreator", fields: [createdById], references: [id])
+  org        Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  project    Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  client     Client?      @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  createdBy  User         @relation("TaskCreator", fields: [createdById], references: [id])
+  verifiedBy User?        @relation("TaskVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
 
   assignments    TaskAssignment[]
   subtasks       Subtask[]
@@ -271,10 +293,13 @@ model Task {
 // Slice 14: many-to-many task collaborators, replacing the old single Task.assigneeId.
 // Every assignee has equal edit rights and gets notified the same way the sole assignee used to.
 model TaskAssignment {
-  id        String   @id @default(cuid())
-  taskId    String
-  userId    String
-  createdAt DateTime @default(now())
+  id              String           @id @default(cuid())
+  taskId          String
+  userId          String
+  status          AssignmentStatus @default(NOT_STARTED)
+  activeStartedAt DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime         @default(now())
 
   task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -325,12 +350,13 @@ model Comment {
   id        String   @id @default(cuid())
   taskId    String
   authorId  String
-  body      String
+  body      String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  task   Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  author User @relation(fields: [authorId], references: [id])
+  task        Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  author      User         @relation(fields: [authorId], references: [id])
+  attachments Attachment[]
 
   @@index([taskId])
   @@map("comments")
@@ -339,6 +365,7 @@ model Comment {
 model Attachment {
   id           String   @id @default(cuid())
   taskId       String
+  commentId    String?
   uploadedById String
   fileName     String
   mimeType     String
@@ -346,10 +373,12 @@ model Attachment {
   storageKey   String   @unique
   createdAt    DateTime @default(now())
 
-  task       Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  uploadedBy User @relation(fields: [uploadedById], references: [id])
+  task       Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  comment    Comment? @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  uploadedBy User     @relation(fields: [uploadedById], references: [id])
 
   @@index([taskId])
+  @@index([commentId])
   @@map("attachments")
 }
 
@@ -377,14 +406,16 @@ model TaskActivity {
 }
 
 model TimeEntry {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   taskId    String
   userId    String
   minutes   Int
   note      String?
   date      DateTime
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  startedAt DateTime?
+  endedAt   DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
   task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
   user User @relation(fields: [userId], references: [id])

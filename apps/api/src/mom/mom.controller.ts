@@ -64,13 +64,13 @@ export class MomController {
     return this.momService.upload(file);
   }
 
-  @Roles('ADMIN', 'MANAGER')
+  // No @Roles() here — ADMIN/MANAGER see every org candidate, and any USER may see and act on
+  // a candidate the AI matched to them specifically. Ownership is enforced in MomService.
   @Get('candidates')
   listCandidates(@Query(new ZodValidationPipe(listMomCandidatesQuerySchema)) query: ListMomCandidatesQuery) {
     return this.momService.listCandidates(query);
   }
 
-  @Roles('ADMIN', 'MANAGER')
   @Patch('candidates/:id')
   updateCandidate(
     @Param('id') id: string,
@@ -79,13 +79,11 @@ export class MomController {
     return this.momService.updateCandidate(id, dto);
   }
 
-  @Roles('ADMIN', 'MANAGER')
   @Post('candidates/:id/accept')
   accept(@Param('id') id: string) {
     return this.momService.acceptCandidate(id);
   }
 
-  @Roles('ADMIN', 'MANAGER')
   @Post('candidates/:id/reject')
   reject(@Param('id') id: string) {
     return this.momService.rejectCandidate(id);

@@ -2,49 +2,57 @@
 
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import {
   createBlockerReportSchema,
-  createCommentSchema,
   createDependencySchema,
   createReopenRequestSchema,
   createSubtaskSchema,
-  createTimeEntrySchema,
-  type AttachmentSummary,
+  type AssignmentStatusName,
   type BlockerReportSummary,
-  type CommentSummary,
   type DependencySummary,
   type MemberSummary,
   type ReopenRequestSummary,
   type SubtaskSummary,
-  type TaskActivitySummary,
   type TaskSummary,
   type TimeEntrySummary,
+  type VerificationDecision,
 } from '@madre-pulse/shared';
 import { AppNav } from '../../../components/app-nav';
 import { FormField } from '../../../components/form-field';
 import { apiFetch } from '../../../lib/api-client';
 import { useRequireAuth } from '../../../lib/use-require-auth';
+import { TaskChatPanel } from './task-chat-panel';
 
 const STATUS_LABELS: Record<string, string> = {
   TODO: 'To Do',
   IN_PROGRESS: 'In Progress',
+  TO_VERIFY: 'To Verify',
+  FAILED: 'Failed',
   DONE: 'Done',
 };
 
-type FeedItem =
-  | { kind: 'activity'; id: string; createdAt: string; activity: TaskActivitySummary }
-  | { kind: 'comment'; id: string; createdAt: string; comment: CommentSummary };
+// A "Completed" personal status only ever means the last timer session ended — it says nothing
+// about whether the assignee is idle right now, so on its own it's never shown; only an active
+// IN_PROGRESS session is distinguished from idle. Once the whole task is verified Done, everyone's
+// personal status simply reads "Completed" regardless of their own timer state.
+function personalStatusLabel(s: AssignmentStatusName, taskStatus: string): string {
+  if (taskStatus === 'DONE') return 'Completed';
+  return s === 'IN_PROGRESS' ? 'In Progress (started)' : 'Not started';
+}
+
+function personalStatusStyle(s: AssignmentStatusName, taskStatus: string): string {
+  if (taskStatus === 'DONE') return 'text-green-600';
+  return s === 'IN_PROGRESS' ? 'text-amber-600' : 'text-muted';
+}
 
 function formatDueDate(iso: string | null): string {
   if (!iso) return 'No due date';
   return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+function formatDateTime(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
 function formatMinutes(minutes: number): string {
@@ -55,9 +63,12 @@ function formatMinutes(minutes: number): string {
   return `${h}h ${m}m`;
 }
 
-function todayLocalDateString(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+function formatElapsed(startIso: string, nowMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor((nowMs - new Date(startIso).getTime()) / 1000));
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
 }
 
 export default function TaskDetailPage() {
@@ -80,21 +91,12 @@ export default function TaskDetailPage() {
   const [newDependencyId, setNewDependencyId] = useState('');
   const [addingDependency, setAddingDependency] = useState(false);
 
-  const [activities, setActivities] = useState<TaskActivitySummary[]>([]);
-  const [comments, setComments] = useState<CommentSummary[]>([]);
-  const [newComment, setNewComment] = useState('');
-  const [postingComment, setPostingComment] = useState(false);
-
-  const [attachments, setAttachments] = useState<AttachmentSummary[]>([]);
-  const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
   const [timeEntries, setTimeEntries] = useState<TimeEntrySummary[]>([]);
-  const [hoursInput, setHoursInput] = useState('');
-  const [dateInput, setDateInput] = useState(todayLocalDateString());
-  const [noteInput, setNoteInput] = useState('');
-  const [loggingTime, setLoggingTime] = useState(false);
+  const [trackingBusy, setTrackingBusy] = useState(false);
+  const [nowTick, setNowTick] = useState(() => Date.now());
+
+  const [reviewNote, setReviewNote] = useState('');
+  const [verifying, setVerifying] = useState(false);
 
   const [reopenRequests, setReopenRequests] = useState<ReopenRequestSummary[]>([]);
   const [reopenReason, setReopenReason] = useState('');
@@ -105,14 +107,11 @@ export default function TaskDetailPage() {
   const [reportingBlocker, setReportingBlocker] = useState(false);
 
   async function loadAll() {
-    const [t, s, d, all, act, cmts, atts, entries, reopens, mems, blockers] = await Promise.all([
+    const [t, s, d, all, entries, reopens, mems, blockers] = await Promise.all([
       apiFetch<TaskSummary>(`/tasks/${taskId}`),
       apiFetch<SubtaskSummary[]>(`/tasks/${taskId}/subtasks`),
       apiFetch<DependencySummary[]>(`/tasks/${taskId}/dependencies`),
       apiFetch<TaskSummary[]>('/tasks'),
-      apiFetch<TaskActivitySummary[]>(`/tasks/${taskId}/activity`),
-      apiFetch<CommentSummary[]>(`/tasks/${taskId}/comments`),
-      apiFetch<AttachmentSummary[]>(`/tasks/${taskId}/attachments`),
       apiFetch<TimeEntrySummary[]>(`/tasks/${taskId}/time-entries`),
       apiFetch<ReopenRequestSummary[]>(`/tasks/${taskId}/reopen-requests`),
       apiFetch<MemberSummary[]>('/members'),
@@ -122,9 +121,6 @@ export default function TaskDetailPage() {
     setSubtasks(s);
     setDependencies(d);
     setAllTasks(all);
-    setActivities(act);
-    setComments(cmts);
-    setAttachments(atts);
     setTimeEntries(entries);
     setReopenRequests(reopens);
     setMembers(mems);
@@ -139,6 +135,14 @@ export default function TaskDetailPage() {
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, taskId]);
+
+  const myAssignment = task?.assignees.find((a) => a.userId === user?.id) ?? null;
+
+  useEffect(() => {
+    if (!myAssignment || myAssignment.personalStatus !== 'IN_PROGRESS') return;
+    const interval = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, [myAssignment?.personalStatus, myAssignment?.activeStartedAt]);
 
   async function onAddSubtask(e: FormEvent) {
     e.preventDefault();
@@ -236,122 +240,77 @@ export default function TaskDetailPage() {
     }
   }
 
-  async function onPostComment(e: FormEvent) {
-    e.preventDefault();
+  async function onStartTracking() {
     setError(null);
-    const parsed = createCommentSchema.safeParse({ body: newComment });
-    if (!parsed.success) {
-      setError(parsed.error.issues[0]?.message ?? 'Comment cannot be empty.');
-      return;
-    }
-    setPostingComment(true);
+    setTrackingBusy(true);
     try {
-      const comment = await apiFetch<CommentSummary>(`/tasks/${taskId}/comments`, {
-        method: 'POST',
-        body: JSON.stringify(parsed.data),
-      });
-      setComments((prev) => [...prev, comment]);
-      setNewComment('');
+      const updated = await apiFetch<TaskSummary>(`/tasks/${taskId}/start`, { method: 'POST' });
+      setTask(updated);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to post comment.');
+      setError(err instanceof Error ? err.message : 'Failed to start tracking.');
     } finally {
-      setPostingComment(false);
+      setTrackingBusy(false);
     }
   }
 
-  async function onDeleteComment(id: string) {
+  /** Stops the current tracking session (logs the elapsed time) — this is just the timer's
+   * stop/pause action, distinct from onMarkTaskComplete below which finishes the whole task. */
+  async function onStopTracking() {
     setError(null);
+    setTrackingBusy(true);
     try {
-      await apiFetch(`/tasks/${taskId}/comments/${id}`, { method: 'DELETE' });
-      setComments((prev) => prev.filter((c) => c.id !== id));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete comment.');
-    }
-  }
-
-  async function onUpload(e: FormEvent) {
-    e.preventDefault();
-    setError(null);
-    if (!uploadFile) return;
-    setUploading(true);
-    try {
-      const formData = new FormData();
-      formData.append('file', uploadFile);
-      const attachment = await apiFetch<AttachmentSummary>(`/tasks/${taskId}/attachments`, {
+      const result = await apiFetch<{ task: TaskSummary; timeEntry: TimeEntrySummary }>(`/tasks/${taskId}/complete`, {
         method: 'POST',
-        body: formData,
       });
-      setAttachments((prev) => [attachment, ...prev]);
-      setUploadFile(null);
-      if (fileInputRef.current) fileInputRef.current.value = '';
+      setTask(result.task);
+      setTimeEntries((prev) => [result.timeEntry, ...prev]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to upload file.');
+      setError(err instanceof Error ? err.message : 'Failed to stop tracking.');
     } finally {
-      setUploading(false);
+      setTrackingBusy(false);
     }
   }
 
-  async function onDownload(attachmentId: string) {
+  /** Sends the task to the assignee's immediate manager for approval — this is the only way a
+   * task can move toward Done now; a direct PATCH to DONE is rejected by the API. */
+  async function onSendForVerification() {
+    if (!window.confirm('Send this task to your manager for verification?')) return;
     setError(null);
+    setTrackingBusy(true);
     try {
-      const { url } = await apiFetch<{ url: string }>(`/tasks/${taskId}/attachments/${attachmentId}/download-url`);
-      window.open(url, '_blank');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to get download link.');
-    }
-  }
-
-  async function onDeleteAttachment(id: string) {
-    setError(null);
-    try {
-      await apiFetch(`/tasks/${taskId}/attachments/${id}`, { method: 'DELETE' });
-      setAttachments((prev) => prev.filter((a) => a.id !== id));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete attachment.');
-    }
-  }
-
-  async function onLogTime(e: FormEvent) {
-    e.preventDefault();
-    setError(null);
-    const hours = parseFloat(hoursInput);
-    if (Number.isNaN(hours) || hours <= 0) {
-      setError('Enter a valid number of hours.');
-      return;
-    }
-    const parsed = createTimeEntrySchema.safeParse({
-      minutes: Math.round(hours * 60),
-      note: noteInput || undefined,
-      date: dateInput || undefined,
-    });
-    if (!parsed.success) {
-      setError(parsed.error.issues[0]?.message ?? 'Please check your input.');
-      return;
-    }
-    setLoggingTime(true);
-    try {
-      const entry = await apiFetch<TimeEntrySummary>(`/tasks/${taskId}/time-entries`, {
-        method: 'POST',
-        body: JSON.stringify(parsed.data),
+      const updated = await apiFetch<TaskSummary>(`/tasks/${taskId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'TO_VERIFY' }),
       });
-      setTimeEntries((prev) => [entry, ...prev]);
-      setHoursInput('');
-      setNoteInput('');
-      setDateInput(todayLocalDateString());
+      setTask(updated);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to log time.');
+      setError(err instanceof Error ? err.message : 'Failed to send task for verification.');
     } finally {
-      setLoggingTime(false);
+      setTrackingBusy(false);
     }
   }
 
-  async function onDeleteTimeEntry(id: string) {
+  async function onDecideVerification(decision: VerificationDecision) {
+    const confirmMessage =
+      decision === 'APPROVE'
+        ? 'Approve this task as verified and complete?'
+        : decision === 'REJECT'
+          ? 'Reject this task? It will be marked Failed until the assignee reworks and resubmits it.'
+          : null;
+    if (confirmMessage && !window.confirm(confirmMessage)) return;
     setError(null);
+    setVerifying(true);
     try {
-      await apiFetch(`/tasks/${taskId}/time-entries/${id}`, { method: 'DELETE' });
-      setTimeEntries((prev) => prev.filter((e) => e.id !== id));
+      const updated = await apiFetch<TaskSummary>(`/tasks/${taskId}/verify`, {
+        method: 'PATCH',
+        body: JSON.stringify({ decision, reviewNote: reviewNote.trim() || undefined }),
+      });
+      setTask(updated);
+      setReviewNote('');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete time entry.');
+      setError(err instanceof Error ? err.message : 'Failed to record verification decision.');
+    } finally {
+      setVerifying(false);
     }
   }
 
@@ -466,15 +425,10 @@ export default function TaskDetailPage() {
   const hasPendingReopenRequest = reopenRequests.some((r) => r.status === 'PENDING');
   const canReview = role === 'ADMIN' || role === 'MANAGER';
 
-  const feed: FeedItem[] = [
-    ...activities.map((a): FeedItem => ({ kind: 'activity', id: a.id, createdAt: a.createdAt, activity: a })),
-    ...comments.map((c): FeedItem => ({ kind: 'comment', id: c.id, createdAt: c.createdAt, comment: c })),
-  ].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-
   return (
     <div className="min-h-screen sm:pl-60">
       <AppNav />
-      <main className="mx-auto max-w-3xl px-4 pb-4 pt-16 sm:px-8 sm:pb-8 sm:pt-8">
+      <main className="mx-auto max-w-7xl px-4 pb-4 pt-16 sm:px-8 sm:pb-8 sm:pt-8">
         <Link href="/tasks" className="mb-4 inline-block text-sm text-accent">
           ← Back to tasks
         </Link>
@@ -484,111 +438,315 @@ export default function TaskDetailPage() {
         {loading || !task ? (
           <p className="text-muted">Loading…</p>
         ) : (
-          <>
-            <div className="mb-6 rounded-card border border-border bg-surface p-6">
-              <h1 className="mb-2 text-xl font-bold text-text">{task.title}</h1>
-              {task.description && <p className="mb-3 text-sm text-muted">{task.description}</p>}
-              <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-muted">
-                <span>
-                  Status: <span className="text-text">{STATUS_LABELS[task.status] ?? task.status}</span>
-                </span>
-                <span>
-                  Priority: <span className="text-text">{task.priority}</span>
-                </span>
-                <span>
-                  Due: <span className="text-text">{formatDueDate(task.dueDate)}</span>
-                </span>
-                <span>
-                  Project: <span className="text-text">{task.projectName ?? 'None'}</span>
-                </span>
-              </div>
-
-              <div className="mt-4">
-                <p className="mb-1.5 text-sm text-muted">Assignees</p>
-                {canEdit ? (
-                  <div className="flex flex-col gap-1.5 rounded-card border border-border bg-surface-alt px-3 py-2">
-                    {members
-                      .filter((m) => m.status === 'ACTIVE')
-                      .map((m) => (
-                        <label key={m.userId} className="flex items-center gap-2 text-sm text-text">
-                          <input
-                            type="checkbox"
-                            checked={task.assignees.some((a) => a.userId === m.userId)}
-                            disabled={updatingAssignees}
-                            onChange={() => onToggleAssignee(m.userId)}
-                          />
-                          {m.name}
-                        </label>
-                      ))}
-                  </div>
-                ) : task.assignees.length > 0 ? (
-                  <div className="flex flex-wrap gap-2">
-                    {task.assignees.map((a) => (
-                      <span key={a.userId} className="flex items-center gap-1.5 rounded-full bg-surface-alt py-1 pl-1 pr-2.5 text-xs text-text">
-                        <span
-                          className="flex h-5 w-5 items-center justify-center rounded-full text-[9px] font-semibold text-white"
-                          style={{ backgroundColor: a.avatarColor }}
-                        >
-                          {a.initials}
-                        </span>
-                        {a.name}
-                      </span>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted">Unassigned</p>
-                )}
-              </div>
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-start">
+            <div className="order-1 lg:col-start-1">
+              <TaskChatPanel taskId={taskId} currentUserId={user?.id} role={role} />
             </div>
 
-            {(task.status === 'DONE' || reopenRequests.length > 0) && (
-              <div className="mb-6 rounded-card border border-border bg-surface p-6">
-                <h2 className="mb-1 text-base font-semibold text-text">Reopen requests</h2>
-                <p className="mb-4 text-sm text-muted">
-                  {reopenRequests.length === 0
-                    ? 'This task is done. If it needs more work, request that it be reopened.'
-                    : 'Requests to reopen this completed task:'}
-                </p>
-                {reopenRequests.length > 0 && (
-                  <ul className="mb-4 flex flex-col gap-2">
-                    {reopenRequests.map((r) => (
-                      <li key={r.id} className="rounded-card border border-border p-3 text-sm">
-                        <div className="flex items-center justify-between">
-                          <span className="font-medium text-text">{r.requestedByName}</span>
+            <div className="order-2 flex flex-col gap-6 lg:col-start-2">
+              <div className="rounded-card border border-border bg-surface p-6">
+                <h1 className="mb-2 text-xl font-bold text-text">{task.title}</h1>
+                {task.description && <p className="mb-3 text-sm text-muted">{task.description}</p>}
+                <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-muted">
+                  <span>
+                    Status: <span className="text-text">{STATUS_LABELS[task.status] ?? task.status}</span>
+                  </span>
+                  <span>
+                    Priority: <span className="text-text">{task.priority}</span>
+                  </span>
+                  <span>
+                    Due: <span className="text-text">{formatDueDate(task.dueDate)}</span>
+                  </span>
+                  <span>
+                    Project: <span className="text-text">{task.projectName ?? 'None'}</span>
+                  </span>
+                </div>
+
+                <div className="mt-4">
+                  <p className="mb-1.5 text-sm text-muted">Assignees</p>
+                  {canEdit ? (
+                    <div className="flex flex-col gap-1.5 rounded-card border border-border bg-surface-alt px-3 py-2">
+                      {members
+                        .filter((m) => m.status === 'ACTIVE')
+                        .map((m) => (
+                          <label key={m.userId} className="flex items-center gap-2 text-sm text-text">
+                            <input
+                              type="checkbox"
+                              checked={task.assignees.some((a) => a.userId === m.userId)}
+                              disabled={updatingAssignees}
+                              onChange={() => onToggleAssignee(m.userId)}
+                            />
+                            {m.name}
+                          </label>
+                        ))}
+                    </div>
+                  ) : task.assignees.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {task.assignees.map((a) => (
+                        <span key={a.userId} className="flex items-center gap-1.5 rounded-full bg-surface-alt py-1 pl-1 pr-2.5 text-xs text-text">
                           <span
-                            className={
-                              r.status === 'PENDING'
-                                ? 'text-xs font-medium text-amber-600'
-                                : r.status === 'APPROVED'
-                                  ? 'text-xs font-medium text-green-600'
-                                  : 'text-xs font-medium text-red-500'
-                            }
+                            className="flex h-5 w-5 items-center justify-center rounded-full text-[9px] font-semibold text-white"
+                            style={{ backgroundColor: a.avatarColor }}
                           >
-                            {r.status}
+                            {a.initials}
                           </span>
-                        </div>
-                        <p className="mt-1 text-text">{r.reason}</p>
-                        {r.status !== 'PENDING' && (
-                          <p className="mt-1 text-xs text-muted">
-                            {r.status === 'APPROVED' ? 'Approved' : 'Rejected'} by {r.reviewedByName}
-                            {r.reviewNote ? `: ${r.reviewNote}` : ''}
+                          {a.name}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted">Unassigned</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-card border border-border bg-surface p-6">
+                <h2 className="mb-4 text-base font-semibold text-text">My Status</h2>
+                {!myAssignment ? (
+                  <p className="mb-4 text-sm text-muted">You&apos;re not assigned to this task.</p>
+                ) : (
+                  <>
+                    <div className="mb-4 flex items-center justify-between gap-4">
+                      <div>
+                        <p className="text-xs text-muted">Status</p>
+                        <p className={`text-sm font-medium ${personalStatusStyle(myAssignment.personalStatus, task.status)}`}>
+                          {personalStatusLabel(myAssignment.personalStatus, task.status)}
+                        </p>
+                        {myAssignment.personalStatus === 'IN_PROGRESS' && myAssignment.activeStartedAt && (
+                          <p className="mt-1 font-mono text-lg text-text">
+                            {formatElapsed(myAssignment.activeStartedAt, nowTick)}
                           </p>
                         )}
-                        {r.status === 'PENDING' && canReview && (
-                          <div className="mt-2 flex gap-2">
+                      </div>
+                      {task.status === 'DONE' && task.verifiedByName ? (
+                        <div>
+                          <p className="text-xs text-muted">Verified by</p>
+                          <p className="text-sm font-medium text-accent">{task.verifiedByName}</p>
+                        </div>
+                      ) : (
+                        task.status !== 'TO_VERIFY' && task.status !== 'DONE' && (
+                          <button
+                            type="button"
+                            onClick={myAssignment.personalStatus === 'IN_PROGRESS' ? onStopTracking : onStartTracking}
+                            disabled={trackingBusy}
+                            className={`rounded-card px-4 py-2 text-sm font-medium text-white disabled:opacity-50 ${
+                              myAssignment.personalStatus === 'IN_PROGRESS' ? 'bg-red-500' : 'bg-accent'
+                            }`}
+                          >
+                            {myAssignment.personalStatus === 'IN_PROGRESS' ? 'Stop' : 'Start'}
+                          </button>
+                        )
+                      )}
+                    </div>
+
+                    {task.assignees.length > 1 && (
+                      <div className="border-t border-border pt-3">
+                        <p className="mb-2 text-xs font-medium text-muted">All assignees</p>
+                        <ul className="flex flex-col gap-1.5">
+                          {task.assignees.map((a) => (
+                            <li key={a.userId} className="flex items-center justify-between text-sm">
+                              <span className="text-text">{a.name}</span>
+                              <span className={personalStatusStyle(a.personalStatus, task.status)}>
+                                {personalStatusLabel(a.personalStatus, task.status)}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {task.status === 'DONE' ? (
+                  <p className="text-sm font-medium text-green-600">✓ This task is verified and complete.</p>
+                ) : task.status === 'TO_VERIFY' ? (
+                  task.canVerify ? (
+                    <div className="flex flex-col gap-2 border-t border-border pt-3">
+                      <p className="text-sm font-medium text-amber-600">Awaiting your verification</p>
+                      <FormField label="Review note (optional)" value={reviewNote} onChange={setReviewNote} />
+                      <div className="flex flex-col gap-2 sm:flex-row">
+                        <button
+                          type="button"
+                          onClick={() => onDecideVerification('APPROVE')}
+                          disabled={verifying}
+                          className="flex-1 rounded-card bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                        >
+                          Approve &amp; complete
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onDecideVerification('SEND_BACK')}
+                          disabled={verifying}
+                          className="flex-1 rounded-card border border-border px-4 py-2 text-sm font-medium text-text disabled:opacity-50"
+                        >
+                          Send back
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onDecideVerification('REJECT')}
+                          disabled={verifying}
+                          className="flex-1 rounded-card border border-red-300 px-4 py-2 text-sm font-medium text-red-500 hover:bg-red-50 disabled:opacity-50"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm font-medium text-amber-600">
+                      Sent for verification — awaiting your manager&apos;s approval.
+                    </p>
+                  )
+                ) : (
+                  <>
+                    {task.status === 'FAILED' && (
+                      <p className="mb-3 text-sm font-medium text-red-500">
+                        ✗ Verification failed. Rework this task and send it in again when ready.
+                      </p>
+                    )}
+                    {canEdit && (
+                      <button
+                        type="button"
+                        onClick={onSendForVerification}
+                        disabled={trackingBusy}
+                        className="w-full rounded-card border border-green-600 px-4 py-2 text-sm font-medium text-green-600 hover:bg-green-50 disabled:opacity-50"
+                      >
+                        Send for verification
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+
+              <div className="rounded-card border border-border bg-surface p-6">
+                <h2 className="mb-1 text-base font-semibold text-text">Time tracked</h2>
+                <p className="mb-4 text-sm text-muted">
+                  {timeEntries.length === 0 ? 'No time logged yet.' : `Sum of efforts: ${formatMinutes(totalMinutes)}`}
+                </p>
+                {timeEntries.length > 0 && (
+                  <ul className="flex max-h-64 flex-col gap-2 overflow-y-auto pr-1">
+                    {timeEntries.map((e) => (
+                      <li key={e.id} className="flex items-center gap-2 text-sm">
+                        <span className="w-16 shrink-0 font-medium text-text">{formatMinutes(e.minutes)}</span>
+                        <span className="w-28 shrink-0 truncate text-xs text-muted">{e.userName}</span>
+                        <span className="flex-1 truncate text-xs text-muted">
+                          {e.startedAt && e.endedAt
+                            ? `${formatDateTime(e.startedAt)} → ${formatDateTime(e.endedAt)}`
+                            : formatDueDate(e.date)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              {(task.status === 'DONE' || reopenRequests.length > 0) && (
+                <div className="rounded-card border border-border bg-surface p-6">
+                  <h2 className="mb-1 text-base font-semibold text-text">Reopen requests</h2>
+                  <p className="mb-4 text-sm text-muted">
+                    {reopenRequests.length === 0
+                      ? 'This task is done. If it needs more work, request that it be reopened.'
+                      : 'Requests to reopen this completed task:'}
+                  </p>
+                  {reopenRequests.length > 0 && (
+                    <ul className="mb-4 flex flex-col gap-2">
+                      {reopenRequests.map((r) => (
+                        <li key={r.id} className="rounded-card border border-border p-3 text-sm">
+                          <div className="flex items-center justify-between">
+                            <span className="font-medium text-text">{r.requestedByName}</span>
+                            <span
+                              className={
+                                r.status === 'PENDING'
+                                  ? 'text-xs font-medium text-amber-600'
+                                  : r.status === 'APPROVED'
+                                    ? 'text-xs font-medium text-green-600'
+                                    : 'text-xs font-medium text-red-500'
+                              }
+                            >
+                              {r.status}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-text">{r.reason}</p>
+                          {r.status !== 'PENDING' && (
+                            <p className="mt-1 text-xs text-muted">
+                              {r.status === 'APPROVED' ? 'Approved' : 'Rejected'} by {r.reviewedByName}
+                              {r.reviewNote ? `: ${r.reviewNote}` : ''}
+                            </p>
+                          )}
+                          {r.status === 'PENDING' && canReview && (
+                            <div className="mt-2 flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => onDecideReopen(r.id, true)}
+                                className="rounded-card bg-accent px-3 py-1 text-xs font-medium text-white"
+                              >
+                                Approve
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => onDecideReopen(r.id, false)}
+                                className="rounded-card border border-border px-3 py-1 text-xs font-medium text-text"
+                              >
+                                Reject
+                              </button>
+                            </div>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {task.status === 'DONE' && canEdit && !hasPendingReopenRequest && (
+                    <form onSubmit={onRequestReopen} className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                      <div className="flex-1">
+                        <FormField label="Reason to reopen" value={reopenReason} onChange={setReopenReason} />
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={requestingReopen}
+                        className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                      >
+                        {requestingReopen ? 'Requesting…' : 'Request reopen'}
+                      </button>
+                    </form>
+                  )}
+                </div>
+              )}
+
+              <div className="rounded-card border border-border bg-surface p-6">
+                <h2 className="mb-1 text-base font-semibold text-text">Blockers</h2>
+                <p className="mb-4 text-sm text-muted">
+                  {blockerReports.length === 0
+                    ? 'Nothing reported. If something is blocking this task, report it so admins/managers can help.'
+                    : 'Reported blockers on this task:'}
+                </p>
+                {blockerReports.length > 0 && (
+                  <ul className="mb-4 flex flex-col gap-2">
+                    {blockerReports.map((b) => (
+                      <li key={b.id} className="rounded-card border border-border p-3 text-sm">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-text">{b.reportedByName}</span>
+                          <span
+                            className={
+                              b.status === 'OPEN' ? 'text-xs font-medium text-red-500' : 'text-xs font-medium text-green-600'
+                            }
+                          >
+                            {b.status}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-text">{b.reason}</p>
+                        {b.status === 'RESOLVED' && (
+                          <p className="mt-1 text-xs text-muted">
+                            Resolved by {b.resolvedByName}
+                            {b.resolutionNote ? `: ${b.resolutionNote}` : ''}
+                          </p>
+                        )}
+                        {b.status === 'OPEN' && canReview && (
+                          <div className="mt-2">
                             <button
                               type="button"
-                              onClick={() => onDecideReopen(r.id, true)}
+                              onClick={() => onResolveBlocker(b.id)}
                               className="rounded-card bg-accent px-3 py-1 text-xs font-medium text-white"
                             >
-                              Approve
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => onDecideReopen(r.id, false)}
-                              className="rounded-card border border-border px-3 py-1 text-xs font-medium text-text"
-                            >
-                              Reject
+                              Resolve
                             </button>
                           </div>
                         )}
@@ -596,103 +754,81 @@ export default function TaskDetailPage() {
                     ))}
                   </ul>
                 )}
-                {task.status === 'DONE' && canEdit && !hasPendingReopenRequest && (
-                  <form onSubmit={onRequestReopen} className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                {canEdit && (
+                  <form onSubmit={onReportBlocker} className="flex flex-col gap-2 sm:flex-row sm:items-end">
                     <div className="flex-1">
-                      <FormField label="Reason to reopen" value={reopenReason} onChange={setReopenReason} />
+                      <FormField label="What's blocking this?" value={blockerReason} onChange={setBlockerReason} />
                     </div>
                     <button
                       type="submit"
-                      disabled={requestingReopen}
+                      disabled={reportingBlocker}
                       className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                     >
-                      {requestingReopen ? 'Requesting…' : 'Request reopen'}
+                      {reportingBlocker ? 'Reporting…' : 'Report blocker'}
                     </button>
                   </form>
                 )}
               </div>
-            )}
 
-            <div className="mb-6 rounded-card border border-border bg-surface p-6">
-              <h2 className="mb-1 text-base font-semibold text-text">Blockers</h2>
-              <p className="mb-4 text-sm text-muted">
-                {blockerReports.length === 0
-                  ? 'Nothing reported. If something is blocking this task, report it so admins/managers can help.'
-                  : 'Reported blockers on this task:'}
-              </p>
-              {blockerReports.length > 0 && (
+              <div className="rounded-card border border-border bg-surface p-6">
+                <h2 className="mb-1 text-base font-semibold text-text">Subtasks</h2>
+                <p className="mb-4 text-sm text-muted">
+                  {subtasks.length === 0 ? 'No subtasks yet.' : `${doneCount} of ${subtasks.length} complete`}
+                </p>
                 <ul className="mb-4 flex flex-col gap-2">
-                  {blockerReports.map((b) => (
-                    <li key={b.id} className="rounded-card border border-border p-3 text-sm">
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium text-text">{b.reportedByName}</span>
-                        <span
-                          className={
-                            b.status === 'OPEN' ? 'text-xs font-medium text-red-500' : 'text-xs font-medium text-green-600'
-                          }
+                  {subtasks.map((s) => (
+                    <li key={s.id} className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={s.done}
+                        onChange={() => onToggleSubtask(s)}
+                        disabled={!canEdit}
+                        className="h-4 w-4"
+                      />
+                      <span className={`flex-1 text-text ${s.done ? 'text-muted line-through' : ''}`}>{s.title}</span>
+                      {canEdit ? (
+                        <select
+                          value={s.assignee?.userId ?? ''}
+                          onChange={(e) => onReassignSubtask(s, e.target.value)}
+                          className="rounded border border-border bg-surface-alt px-2 py-1 text-xs text-text"
                         >
-                          {b.status}
+                          <option value="">Unassigned</option>
+                          {task.assignees.map((a) => (
+                            <option key={a.userId} value={a.userId}>
+                              {a.name}
+                            </option>
+                          ))}
+                        </select>
+                      ) : s.assignee ? (
+                        <span
+                          title={s.assignee.name}
+                          className="flex h-5 w-5 items-center justify-center rounded-full text-[9px] font-semibold text-white"
+                          style={{ backgroundColor: s.assignee.avatarColor }}
+                        >
+                          {s.assignee.initials}
                         </span>
-                      </div>
-                      <p className="mt-1 text-text">{b.reason}</p>
-                      {b.status === 'RESOLVED' && (
-                        <p className="mt-1 text-xs text-muted">
-                          Resolved by {b.resolvedByName}
-                          {b.resolutionNote ? `: ${b.resolutionNote}` : ''}
-                        </p>
+                      ) : (
+                        <span className="text-xs text-faint">Unassigned</span>
                       )}
-                      {b.status === 'OPEN' && canReview && (
-                        <div className="mt-2">
-                          <button
-                            type="button"
-                            onClick={() => onResolveBlocker(b.id)}
-                            className="rounded-card bg-accent px-3 py-1 text-xs font-medium text-white"
-                          >
-                            Resolve
-                          </button>
-                        </div>
+                      {canEdit && (
+                        <button type="button" onClick={() => onDeleteSubtask(s.id)} className="text-xs text-red-500">
+                          Remove
+                        </button>
                       )}
                     </li>
                   ))}
                 </ul>
-              )}
-              {canEdit && (
-                <form onSubmit={onReportBlocker} className="flex flex-col gap-2 sm:flex-row sm:items-end">
-                  <div className="flex-1">
-                    <FormField label="What's blocking this?" value={blockerReason} onChange={setBlockerReason} />
-                  </div>
-                  <button
-                    type="submit"
-                    disabled={reportingBlocker}
-                    className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                  >
-                    {reportingBlocker ? 'Reporting…' : 'Report blocker'}
-                  </button>
-                </form>
-              )}
-            </div>
-
-            <div className="mb-6 rounded-card border border-border bg-surface p-6">
-              <h2 className="mb-1 text-base font-semibold text-text">Subtasks</h2>
-              <p className="mb-4 text-sm text-muted">
-                {subtasks.length === 0 ? 'No subtasks yet.' : `${doneCount} of ${subtasks.length} complete`}
-              </p>
-              <ul className="mb-4 flex flex-col gap-2">
-                {subtasks.map((s) => (
-                  <li key={s.id} className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={s.done}
-                      onChange={() => onToggleSubtask(s)}
-                      disabled={!canEdit}
-                      className="h-4 w-4"
-                    />
-                    <span className={`flex-1 text-text ${s.done ? 'text-muted line-through' : ''}`}>{s.title}</span>
-                    {canEdit ? (
+                {canEdit && (
+                  <form onSubmit={onAddSubtask} className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                    <div className="flex-1">
+                      <FormField label="New subtask" value={newSubtask} onChange={setNewSubtask} />
+                    </div>
+                    <label className="flex flex-col gap-1 text-sm text-text">
+                      Owner
                       <select
-                        value={s.assignee?.userId ?? ''}
-                        onChange={(e) => onReassignSubtask(s, e.target.value)}
-                        className="rounded border border-border bg-surface-alt px-2 py-1 text-xs text-text"
+                        value={newSubtaskAssigneeId}
+                        onChange={(e) => setNewSubtaskAssigneeId(e.target.value)}
+                        className="rounded-card border border-border bg-surface-alt px-3 py-2 text-sm text-text"
                       >
                         <option value="">Unassigned</option>
                         {task.assignees.map((a) => (
@@ -701,257 +837,68 @@ export default function TaskDetailPage() {
                           </option>
                         ))}
                       </select>
-                    ) : s.assignee ? (
-                      <span
-                        title={s.assignee.name}
-                        className="flex h-5 w-5 items-center justify-center rounded-full text-[9px] font-semibold text-white"
-                        style={{ backgroundColor: s.assignee.avatarColor }}
-                      >
-                        {s.assignee.initials}
-                      </span>
-                    ) : (
-                      <span className="text-xs text-faint">Unassigned</span>
-                    )}
-                    {canEdit && (
-                      <button type="button" onClick={() => onDeleteSubtask(s.id)} className="text-xs text-red-500">
-                        Remove
-                      </button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-              {canEdit && (
-                <form onSubmit={onAddSubtask} className="flex flex-col gap-2 sm:flex-row sm:items-end">
-                  <div className="flex-1">
-                    <FormField label="New subtask" value={newSubtask} onChange={setNewSubtask} />
-                  </div>
-                  <label className="flex flex-col gap-1 text-sm text-text">
-                    Owner
-                    <select
-                      value={newSubtaskAssigneeId}
-                      onChange={(e) => setNewSubtaskAssigneeId(e.target.value)}
-                      className="rounded-card border border-border bg-surface-alt px-3 py-2 text-sm text-text"
+                    </label>
+                    <button
+                      type="submit"
+                      disabled={addingSubtask}
+                      className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                     >
-                      <option value="">Unassigned</option>
-                      {task.assignees.map((a) => (
-                        <option key={a.userId} value={a.userId}>
-                          {a.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <button
-                    type="submit"
-                    disabled={addingSubtask}
-                    className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                  >
-                    Add
-                  </button>
-                </form>
-              )}
-            </div>
-
-            <div className="rounded-card border border-border bg-surface p-6">
-              <h2 className="mb-1 text-base font-semibold text-text">Depends on</h2>
-              <p className="mb-4 text-sm text-muted">
-                {dependencies.length === 0 ? 'This task has no blockers.' : 'This task is blocked until these are done:'}
-              </p>
-              <ul className="mb-4 flex flex-col gap-2">
-                {dependencies.map((d) => (
-                  <li key={d.id} className="flex items-center gap-2 text-sm">
-                    <span className={`h-2 w-2 shrink-0 rounded-full ${d.dependsOnStatus === 'DONE' ? 'bg-green-500' : 'bg-amber-500'}`} />
-                    <Link href={`/tasks/${d.dependsOnId}`} className="flex-1 text-text hover:text-accent hover:underline">
-                      {d.dependsOnTitle}
-                    </Link>
-                    <span className="text-xs text-muted">{STATUS_LABELS[d.dependsOnStatus] ?? d.dependsOnStatus}</span>
-                    {canEdit && (
-                      <button type="button" onClick={() => onRemoveDependency(d.id)} className="text-xs text-red-500">
-                        Remove
-                      </button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-              {canEdit && dependencyOptions.length > 0 && (
-                <form onSubmit={onAddDependency} className="flex flex-col gap-2 sm:flex-row sm:items-end">
-                  <label className="flex flex-1 flex-col gap-1 text-sm text-text">
-                    Add a blocker
-                    <select
-                      value={newDependencyId}
-                      onChange={(e) => setNewDependencyId(e.target.value)}
-                      className="rounded-card border border-border bg-surface-alt px-3 py-2 text-sm text-text"
-                    >
-                      <option value="">Select a task…</option>
-                      {dependencyOptions.map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {t.title}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <button
-                    type="submit"
-                    disabled={addingDependency || !newDependencyId}
-                    className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                  >
-                    Add
-                  </button>
-                </form>
-              )}
-            </div>
-
-            <div className="mb-6 mt-6 rounded-card border border-border bg-surface p-6">
-              <h2 className="mb-4 text-base font-semibold text-text">Attachments</h2>
-              {attachments.length === 0 ? (
-                <p className="mb-4 text-sm text-muted">No files attached yet.</p>
-              ) : (
-                <ul className="mb-4 flex flex-col gap-2">
-                  {attachments.map((a) => (
-                    <li key={a.id} className="flex items-center gap-2 text-sm">
-                      <button
-                        type="button"
-                        onClick={() => onDownload(a.id)}
-                        className="flex-1 truncate text-left text-text hover:text-accent hover:underline"
-                      >
-                        {a.fileName}
-                      </button>
-                      <span className="shrink-0 text-xs text-muted">{formatBytes(a.sizeBytes)}</span>
-                      <span className="shrink-0 text-xs text-muted">{a.uploadedByName}</span>
-                      {(role === 'ADMIN' || role === 'MANAGER' || a.uploadedById === user?.id) && (
-                        <button
-                          type="button"
-                          onClick={() => onDeleteAttachment(a.id)}
-                          className="shrink-0 text-xs text-red-500"
-                        >
-                          Remove
-                        </button>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <form onSubmit={onUpload} className="flex flex-col gap-2 sm:flex-row sm:items-end">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
-                  className="flex-1 text-sm text-text"
-                />
-                <button
-                  type="submit"
-                  disabled={uploading || !uploadFile}
-                  className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                >
-                  {uploading ? 'Uploading…' : 'Upload'}
-                </button>
-              </form>
-            </div>
-
-            <div className="mb-6 rounded-card border border-border bg-surface p-6">
-              <h2 className="mb-1 text-base font-semibold text-text">Time tracked</h2>
-              <p className="mb-4 text-sm text-muted">
-                {timeEntries.length === 0 ? 'No time logged yet.' : `Total: ${formatMinutes(totalMinutes)}`}
-              </p>
-              {timeEntries.length > 0 && (
-                <ul className="mb-4 flex flex-col gap-2">
-                  {timeEntries.map((e) => (
-                    <li key={e.id} className="flex items-center gap-2 text-sm">
-                      <span className="w-16 shrink-0 text-text">{formatMinutes(e.minutes)}</span>
-                      <span className="w-28 shrink-0 text-xs text-muted">{formatDueDate(e.date)}</span>
-                      <span className="w-28 shrink-0 truncate text-xs text-muted">{e.userName}</span>
-                      <span className="flex-1 truncate text-xs text-muted">{e.note ?? ''}</span>
-                      {(role === 'ADMIN' || role === 'MANAGER' || e.userId === user?.id) && (
-                        <button
-                          type="button"
-                          onClick={() => onDeleteTimeEntry(e.id)}
-                          className="shrink-0 text-xs text-red-500"
-                        >
-                          Remove
-                        </button>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <form onSubmit={onLogTime} className="flex flex-wrap items-end gap-2">
-                <label className="flex w-24 flex-col gap-1 text-sm text-text">
-                  Hours
-                  <input
-                    type="number"
-                    step="0.25"
-                    min="0"
-                    value={hoursInput}
-                    onChange={(e) => setHoursInput(e.target.value)}
-                    required
-                    className="rounded-card border border-border bg-surface-alt px-3 py-2 text-sm text-text outline-none focus:border-accent"
-                  />
-                </label>
-                <FormField label="Date" type="date" value={dateInput} onChange={setDateInput} />
-                <div className="flex-1">
-                  <FormField label="Note (optional)" value={noteInput} onChange={setNoteInput} required={false} />
-                </div>
-                <button
-                  type="submit"
-                  disabled={loggingTime}
-                  className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                >
-                  {loggingTime ? 'Logging…' : 'Log time'}
-                </button>
-              </form>
-            </div>
-
-            <div className="rounded-card border border-border bg-surface p-6">
-              <h2 className="mb-4 text-base font-semibold text-text">Activity</h2>
-              <div className="mb-4 flex flex-col gap-3">
-                {feed.length === 0 && <p className="text-sm text-muted">No activity yet.</p>}
-                {feed.map((item) =>
-                  item.kind === 'activity' ? (
-                    <p key={item.id} className="text-xs text-muted">
-                      <span className="text-text">{item.activity.actorName}</span> {item.activity.message} ·{' '}
-                      {new Date(item.createdAt).toLocaleString()}
-                    </p>
-                  ) : (
-                    <div key={item.id} className="flex gap-2">
-                      <div
-                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white"
-                        style={{ backgroundColor: item.comment.authorAvatarColor }}
-                      >
-                        {item.comment.authorInitials}
-                      </div>
-                      <div className="flex-1 rounded-card bg-surface-alt p-3 text-sm">
-                        <div className="mb-1 flex items-center justify-between">
-                          <span className="font-medium text-text">{item.comment.authorName}</span>
-                          <span className="text-xs text-muted">{new Date(item.createdAt).toLocaleString()}</span>
-                        </div>
-                        <p className="whitespace-pre-wrap text-text">{item.comment.body}</p>
-                        {(role === 'ADMIN' || role === 'MANAGER' || item.comment.authorId === user?.id) && (
-                          <button
-                            type="button"
-                            onClick={() => onDeleteComment(item.comment.id)}
-                            className="mt-1 text-xs text-red-500"
-                          >
-                            Delete
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ),
+                      Add
+                    </button>
+                  </form>
                 )}
               </div>
-              <form onSubmit={onPostComment} className="flex flex-col gap-2 sm:flex-row sm:items-end">
-                <div className="flex-1">
-                  <FormField label="Add a comment" value={newComment} onChange={setNewComment} />
-                </div>
-                <button
-                  type="submit"
-                  disabled={postingComment}
-                  className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                >
-                  Post
-                </button>
-              </form>
+
+              <div className="rounded-card border border-border bg-surface p-6">
+                <h2 className="mb-1 text-base font-semibold text-text">Depends on</h2>
+                <p className="mb-4 text-sm text-muted">
+                  {dependencies.length === 0 ? 'This task has no blockers.' : 'This task is blocked until these are done:'}
+                </p>
+                <ul className="mb-4 flex flex-col gap-2">
+                  {dependencies.map((d) => (
+                    <li key={d.id} className="flex items-center gap-2 text-sm">
+                      <span className={`h-2 w-2 shrink-0 rounded-full ${d.dependsOnStatus === 'DONE' ? 'bg-green-500' : 'bg-amber-500'}`} />
+                      <Link href={`/tasks/${d.dependsOnId}`} className="flex-1 text-text hover:text-accent hover:underline">
+                        {d.dependsOnTitle}
+                      </Link>
+                      <span className="text-xs text-muted">{STATUS_LABELS[d.dependsOnStatus] ?? d.dependsOnStatus}</span>
+                      {canEdit && (
+                        <button type="button" onClick={() => onRemoveDependency(d.id)} className="text-xs text-red-500">
+                          Remove
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+                {canEdit && dependencyOptions.length > 0 && (
+                  <form onSubmit={onAddDependency} className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                    <label className="flex flex-1 flex-col gap-1 text-sm text-text">
+                      Add a blocker
+                      <select
+                        value={newDependencyId}
+                        onChange={(e) => setNewDependencyId(e.target.value)}
+                        className="rounded-card border border-border bg-surface-alt px-3 py-2 text-sm text-text"
+                      >
+                        <option value="">Select a task…</option>
+                        {dependencyOptions.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.title}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      type="submit"
+                      disabled={addingDependency || !newDependencyId}
+                      className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                    >
+                      Add
+                    </button>
+                  </form>
+                )}
+              </div>
             </div>
-          </>
+          </div>
         )}
       </main>
     </div>

@@ -34,3 +34,22 @@ export function taskVisibilityWhere(userIds: string[] | null): Prisma.TaskWhereI
   if (userIds === null) return {};
   return { OR: [{ createdById: { in: userIds } }, { assignments: { some: { userId: { in: userIds } } } }] };
 }
+
+/** The current user's direct reports only (never includes themself) — used for task verification,
+ * where a manager must never be able to approve their own work, only a subordinate's. */
+export async function getDirectReportUserIds(
+  prisma: PrismaService,
+  cls: ClsService<AppClsStore>,
+  orgId: string,
+): Promise<string[]> {
+  const userId = cls.get('userId');
+  if (!userId) return [];
+  const ownMembership = await prisma.membership.findFirst({ where: { userId, orgId } });
+  if (!ownMembership) return [];
+
+  const reports = await prisma.membership.findMany({
+    where: { orgId, managerId: ownMembership.id },
+    select: { userId: true },
+  });
+  return reports.map((r) => r.userId);
+}

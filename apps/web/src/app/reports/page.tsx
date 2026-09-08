@@ -85,7 +85,7 @@ export default function ReportsPage() {
   return (
     <div className="min-h-screen sm:pl-60 print:pl-0">
       <AppNav />
-      <main className="mx-auto max-w-4xl px-4 pb-4 pt-16 sm:px-8 sm:pb-8 sm:pt-8 print:pt-8">
+      <main className="mx-auto max-w-7xl px-4 pb-4 pt-16 sm:px-8 sm:pb-8 sm:pt-8 print:pt-8">
         <h1 className="mb-6 text-xl font-bold text-text">Reports</h1>
 
         {!canView ? (

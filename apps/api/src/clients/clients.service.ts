@@ -9,6 +9,9 @@ import { PrismaService } from '../prisma/prisma.service';
 interface ClientRecord {
   id: string;
   name: string;
+  website: string | null;
+  location: string | null;
+  poc: string | null;
   notes: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -31,7 +34,14 @@ export class ClientsService {
     const orgId = requireOrgId(this.cls);
     try {
       const client = await this.prisma.client.create({
-        data: { orgId, name: input.name, notes: input.notes ?? null },
+        data: {
+          orgId,
+          name: input.name,
+          website: input.website ?? null,
+          location: input.location ?? null,
+          poc: input.poc ?? null,
+          notes: input.notes ?? null,
+        },
       });
       return this.toSummary(client);
     } catch (err) {
@@ -47,7 +57,13 @@ export class ClientsService {
     try {
       const client = await this.prisma.client.update({
         where: { id },
-        data: { name: input.name, notes: input.notes },
+        data: {
+          name: input.name,
+          website: input.website,
+          location: input.location,
+          poc: input.poc,
+          notes: input.notes,
+        },
       });
       return this.toSummary(client);
     } catch (err) {
@@ -73,6 +89,9 @@ export class ClientsService {
     return {
       id: c.id,
       name: c.name,
+      website: c.website,
+      location: c.location,
+      poc: c.poc,
       notes: c.notes,
       createdAt: c.createdAt.toISOString(),
       updatedAt: c.updatedAt.toISOString(),

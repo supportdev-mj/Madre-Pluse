@@ -8,15 +8,19 @@ import { apiFetch } from '../../lib/api-client';
 import { useAuth } from '../../lib/auth-context';
 import { useRequireAuth } from '../../lib/use-require-auth';
 
-const STATUS_ORDER = ['TODO', 'IN_PROGRESS', 'DONE'] as const;
+const STATUS_ORDER = ['TODO', 'IN_PROGRESS', 'TO_VERIFY', 'FAILED', 'DONE'] as const;
 const STATUS_LABELS: Record<(typeof STATUS_ORDER)[number], string> = {
   TODO: 'To Do',
   IN_PROGRESS: 'In Progress',
+  TO_VERIFY: 'To Verify',
+  FAILED: 'Failed',
   DONE: 'Done',
 };
 const STATUS_COLORS: Record<(typeof STATUS_ORDER)[number], string> = {
   TODO: '#93A6BC',
   IN_PROGRESS: '#0EA5E9',
+  TO_VERIFY: '#F59E0B',
+  FAILED: '#EF4444',
   DONE: '#22C55E',
 };
 

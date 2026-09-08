@@ -23,8 +23,35 @@ type TaskView = 'list' | 'board' | 'calendar';
 const STATUS_LABELS: Record<TaskStatusName, string> = {
   TODO: 'To Do',
   IN_PROGRESS: 'In Progress',
+  TO_VERIFY: 'To Verify',
+  FAILED: 'Failed',
   DONE: 'Done',
 };
+
+// Done and Failed are only ever reachable by a manager deciding a verification (see the task
+// detail page), never by a direct status edit — so they're left out of the editable dropdown below.
+const EDITABLE_STATUSES = TASK_STATUSES.filter((s) => s !== 'DONE' && s !== 'FAILED');
+
+// The top-row slicer tabs. TO_VERIFY covers two viewpoints on the same status: "Under
+// Verification" is what I (as an assignee) sent in and am waiting on; "To Verify" is what's
+// waiting on ME to decide (as a manager/admin) — distinguished client-side via TaskSummary.canVerify.
+type TaskTab = 'ALL' | 'TODO' | 'IN_PROGRESS' | 'UNDER_VERIFICATION' | 'TO_VERIFY' | 'DONE' | 'FAILED';
+
+const TABS: { id: TaskTab; label: string }[] = [
+  { id: 'ALL', label: 'All' },
+  { id: 'TODO', label: 'To Do' },
+  { id: 'IN_PROGRESS', label: 'In Progress' },
+  { id: 'UNDER_VERIFICATION', label: 'Under Verification' },
+  { id: 'TO_VERIFY', label: 'To Verify' },
+  { id: 'DONE', label: 'Completed' },
+  { id: 'FAILED', label: 'Failed' },
+];
+
+function tabStatusParam(tab: TaskTab): TaskStatusName | undefined {
+  if (tab === 'ALL') return undefined;
+  if (tab === 'UNDER_VERIFICATION') return 'TO_VERIFY';
+  return tab;
+}
 
 function formatDueDate(iso: string | null): string {
   if (!iso) return '—';
@@ -41,43 +68,47 @@ export default function TasksPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [view, setView] = useState<TaskView>('list');
-  const [statusFilter, setStatusFilter] = useState<TaskStatusName | ''>('');
+  const [activeTab, setActiveTab] = useState<TaskTab>('IN_PROGRESS');
   const [assigneeFilter, setAssigneeFilter] = useState<string>('');
   const [showAddModal, setShowAddModal] = useState(false);
 
   async function loadTasks() {
     const params = new URLSearchParams();
-    if (statusFilter) params.set('status', statusFilter);
+    const statusParam = tabStatusParam(activeTab);
+    if (statusParam) params.set('status', statusParam);
     if (assigneeFilter) params.set('assigneeId', assigneeFilter);
     const qs = params.toString();
     const data = await apiFetch<TaskSummary[]>(`/tasks${qs ? `?${qs}` : ''}`);
-    setTasks(data);
+    const filtered =
+      activeTab === 'UNDER_VERIFICATION'
+        ? data.filter((t) => t.assignees.some((a) => a.userId === user?.id))
+        : activeTab === 'TO_VERIFY'
+          ? data.filter((t) => t.canVerify)
+          : data;
+    setTasks(filtered);
   }
 
   useEffect(() => {
     if (status !== 'authenticated') return;
-    setLoading(true);
-    Promise.all([
-      apiFetch<MemberSummary[]>('/members'),
-      apiFetch<ProjectSummary[]>('/projects'),
-      apiFetch<ClientSummary[]>('/clients'),
-    ])
+    Promise.all([apiFetch<MemberSummary[]>('/members'), apiFetch<ProjectSummary[]>('/projects'), apiFetch<ClientSummary[]>('/clients')])
       .then(([m, p, c]) => {
         setMembers(m);
         setProjects(p);
         setClients(c);
       })
-      .then(loadTasks)
-      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load tasks'))
-      .finally(() => setLoading(false));
+      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load tasks'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
 
+  // Also covers the initial load — this fires on mount with the default tab/filter too.
   useEffect(() => {
     if (status !== 'authenticated') return;
-    loadTasks().catch((err) => setError(err instanceof Error ? err.message : 'Failed to load tasks'));
+    setLoading(true);
+    loadTasks()
+      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load tasks'))
+      .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusFilter, assigneeFilter]);
+  }, [status, activeTab, assigneeFilter]);
 
   async function onAddTask(input: CreateTaskInput) {
     const task = await apiFetch<TaskSummary>('/tasks', { method: 'POST', body: JSON.stringify(input) });
@@ -118,7 +149,7 @@ export default function TasksPage() {
   return (
     <div className="min-h-screen sm:pl-60">
       <AppNav />
-      <main className="mx-auto max-w-6xl px-4 pb-4 pt-16 sm:px-8 sm:pb-8 sm:pt-8">
+      <main className="mx-auto max-w-7xl px-4 pb-4 pt-16 sm:px-8 sm:pb-8 sm:pt-8">
         <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
           <h1 className="text-xl font-bold text-text">Tasks</h1>
           <button
@@ -135,6 +166,21 @@ export default function TasksPage() {
 
         {error && <p className="mb-4 text-sm text-red-500">{error}</p>}
 
+        <div className="mb-4 flex flex-wrap items-center gap-2 overflow-x-auto rounded-card border border-border bg-surface p-1.5 text-sm">
+          {TABS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              className={`shrink-0 rounded-card px-3 py-1.5 font-medium ${
+                activeTab === tab.id ? 'bg-accent text-white' : 'text-muted hover:bg-surface-alt hover:text-text'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
         <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
           <div className="flex overflow-hidden rounded-card border border-border text-sm">
             {(['list', 'board', 'calendar'] as const).map((v) => (
@@ -149,40 +195,21 @@ export default function TasksPage() {
             ))}
           </div>
 
-          <div className="flex flex-wrap gap-4">
-            {view !== 'board' && (
-              <label className="flex flex-col gap-1 text-sm text-text">
-                Status
-                <select
-                  value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value as TaskStatusName | '')}
-                  className="rounded-card border border-border bg-surface-alt px-3 py-2 text-sm text-text"
-                >
-                  <option value="">All</option>
-                  {TASK_STATUSES.map((s) => (
-                    <option key={s} value={s}>
-                      {STATUS_LABELS[s]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-            <label className="flex flex-col gap-1 text-sm text-text">
-              Assignee
-              <select
-                value={assigneeFilter}
-                onChange={(e) => setAssigneeFilter(e.target.value)}
-                className="rounded-card border border-border bg-surface-alt px-3 py-2 text-sm text-text"
-              >
-                <option value="">All</option>
-                {members.map((m) => (
-                  <option key={m.userId} value={m.userId}>
-                    {m.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
+          <label className="flex flex-col gap-1 text-sm text-text">
+            Assignee
+            <select
+              value={assigneeFilter}
+              onChange={(e) => setAssigneeFilter(e.target.value)}
+              className="rounded-card border border-border bg-surface-alt px-3 py-2 text-sm text-text"
+            >
+              <option value="">All</option>
+              {members.map((m) => (
+                <option key={m.userId} value={m.userId}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
 
         {loading ? (
@@ -221,13 +248,13 @@ export default function TasksPage() {
                       </Link>
                     </td>
                     <td className="px-4 py-2 text-text">
-                      {canEdit(t) ? (
+                      {canEdit(t) && t.status !== 'DONE' && t.status !== 'FAILED' ? (
                         <select
                           value={t.status}
                           onChange={(e) => onStatusChange(t, e.target.value as TaskStatusName)}
                           className="rounded border border-border bg-surface px-2 py-1 text-sm text-text"
                         >
-                          {TASK_STATUSES.map((s) => (
+                          {EDITABLE_STATUSES.map((s) => (
                             <option key={s} value={s}>
                               {STATUS_LABELS[s]}
                             </option>
