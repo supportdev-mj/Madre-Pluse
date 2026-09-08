@@ -21,7 +21,7 @@ import { requireOrgId } from '../common/tenant/require-org-id';
 import { getDirectReportUserIds, getTaskVisibleUserIds, taskVisibilityWhere } from '../common/tenant/task-visibility';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { assertCanModifyTask } from './task-permissions';
+import { assertCanEditTask } from './task-permissions';
 
 interface PendingActivity {
   type: TaskActivityType;
@@ -108,6 +108,7 @@ export class TasksService {
     const orgId = requireOrgId(this.cls);
     const createdById = this.currentUserId();
     const assigneeIds = [...new Set(input.assigneeIds ?? [])];
+    await this.assertCanAssign(orgId, assigneeIds);
 
     if (input.projectId) await this.assertProjectInOrg(input.projectId, orgId);
     if (input.clientId) await this.assertClientInOrg(input.clientId, orgId);
@@ -160,7 +161,8 @@ export class TasksService {
     });
     if (!existing) throw new NotFoundException('Task not found');
 
-    assertCanModifyTask(this.cls, { assigneeIds: existing.assignments.map((a) => a.userId), createdById: existing.createdById });
+    const existingAssigneeIds = existing.assignments.map((a) => a.userId);
+    await assertCanEditTask(this.prisma, this.cls, orgId, existingAssigneeIds);
 
     // DONE and FAILED are only ever reachable through the verification flow (verifyTask), never a
     // direct edit — this keeps "who decided this" meaningful and mirrors how reopen-requests
@@ -168,13 +170,24 @@ export class TasksService {
     if (input.status === 'DONE' || input.status === 'FAILED') {
       throw new BadRequestException('A task can only reach Done or Failed by verifying it — see the To Verify workflow');
     }
+    // While awaiting verification, status can only move via the verify decision (Approve/Send
+    // back/Reject) — never a direct edit, so a manager can't be second-guessed by a plain PATCH.
+    if (existing.status === 'TO_VERIFY' && input.status !== undefined) {
+      throw new BadRequestException('This task is awaiting verification — decide it from the To Verify workflow instead');
+    }
+    // Once work has started, only an admin can send a task back to To Do.
+    const role = this.cls.get('role');
+    if (input.status === 'TODO' && existing.status !== 'TODO' && role !== 'ADMIN') {
+      throw new ForbiddenException('Only an admin can move a started task back to To Do');
+    }
 
     if (input.projectId) await this.assertProjectInOrg(input.projectId, orgId);
     if (input.clientId) await this.assertClientInOrg(input.clientId, orgId);
     const nextAssigneeIds = input.assigneeIds !== undefined ? [...new Set(input.assigneeIds)] : undefined;
-    if (nextAssigneeIds) for (const userId of nextAssigneeIds) await this.assertActiveMemberOfOrg(userId, orgId);
-
-    const existingAssigneeIds = existing.assignments.map((a) => a.userId);
+    if (nextAssigneeIds) {
+      await this.assertCanAssign(orgId, nextAssigneeIds);
+      for (const userId of nextAssigneeIds) await this.assertActiveMemberOfOrg(userId, orgId);
+    }
     const activities = await this.buildChangeActivities(existing, existingAssigneeIds, input, nextAssigneeIds);
     const actorId = this.currentUserId();
     const completedAt = this.computeCompletedAt(existing.status, input.status);
@@ -232,8 +245,8 @@ export class TasksService {
 
   /** Starts the CURRENT user's own personal time-tracking session on a task they're assigned to.
    * Re-startable after a prior COMPLETED session (logs another session, doesn't reopen the old one).
-   * If this is the task's first-ever Start (still TODO) — or a resume after a rejected verification
-   * (FAILED) — auto-advances the shared task status to IN_PROGRESS. Personal Complete never
+   * If this is the task's first-ever Start (still TODO), auto-advances the shared task status to
+   * IN_PROGRESS. Refuses a FAILED task outright — see the guard below. Personal Complete never
    * auto-advances the shared status to DONE (that stays a deliberate action via verification),
    * since other assignees may still be working. */
   async startTracking(taskId: string): Promise<TaskSummary> {
@@ -251,6 +264,11 @@ export class TasksService {
     if (assignment.status === 'IN_PROGRESS') {
       throw new BadRequestException('You already have this task in progress');
     }
+    // A failed task can't be reworked by the assignee on their own initiative — a manager or
+    // admin must deliberately take it back to In Progress first (see TasksService.update()).
+    if (task.status === 'FAILED') {
+      throw new BadRequestException('This task failed verification — ask your manager or an admin to reopen it before resuming work');
+    }
 
     const now = new Date();
     await this.prisma.$transaction(async (tx) => {
@@ -258,15 +276,10 @@ export class TasksService {
         where: { id: assignment.id },
         data: { status: 'IN_PROGRESS', activeStartedAt: now },
       });
-      if (task.status === 'TODO' || task.status === 'FAILED') {
+      if (task.status === 'TODO') {
         await tx.task.update({ where: { id: taskId }, data: { status: 'IN_PROGRESS' } });
         await tx.taskActivity.create({
-          data: {
-            taskId,
-            actorId: userId,
-            type: 'STATUS_CHANGED',
-            message: `changed status from ${task.status} to IN_PROGRESS (started work)`,
-          },
+          data: { taskId, actorId: userId, type: 'STATUS_CHANGED', message: 'changed status from TODO to IN_PROGRESS (started work)' },
         });
       }
     });
@@ -307,6 +320,42 @@ export class TasksService {
     ]);
 
     return { task: await this.get(taskId), timeEntry: this.toTimeEntrySummary(timeEntry) };
+  }
+
+  /** The CURRENT user, as an assignee, submits this task for their manager's verification — the
+   * only way into TO_VERIFY available to a plain assignee (an admin/manager can also do it via a
+   * direct PATCH, e.g. on someone else's behalf). Only an open task (To Do or In Progress) can be
+   * submitted — not one already awaiting a decision, failed, or done. */
+  async submitForVerification(taskId: string): Promise<TaskSummary> {
+    const orgId = requireOrgId(this.cls);
+    const userId = this.currentUserId();
+    const visibleUserIds = await getTaskVisibleUserIds(this.prisma, this.cls, orgId);
+    const task = await this.prisma.task.findFirst({
+      where: { id: taskId, orgId, ...taskVisibilityWhere(visibleUserIds) },
+      include: { assignments: true },
+    });
+    if (!task) throw new NotFoundException('Task not found');
+    if (!task.assignments.some((a) => a.userId === userId)) {
+      throw new ForbiddenException('Only an assignee can submit this task for verification');
+    }
+    if (task.status !== 'TODO' && task.status !== 'IN_PROGRESS') {
+      throw new BadRequestException('Only an open task (To Do or In Progress) can be submitted for verification');
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.task.update({ where: { id: taskId }, data: { status: 'TO_VERIFY' } });
+      await tx.taskActivity.create({
+        data: {
+          taskId,
+          actorId: userId,
+          type: 'STATUS_CHANGED',
+          message: `changed status from ${task.status} to TO_VERIFY (submitted for verification)`,
+        },
+      });
+    });
+
+    await this.notifyManagerOfVerificationRequest(orgId, userId, task);
+    return this.get(taskId);
   }
 
   async remove(id: string): Promise<void> {
@@ -401,6 +450,19 @@ export class TasksService {
   private async assertActiveMemberOfOrg(userId: string, orgId: string): Promise<void> {
     const membership = await this.prisma.membership.findFirst({ where: { userId, orgId, status: 'ACTIVE' } });
     if (!membership) throw new BadRequestException('Assignee is not an active member of this organization');
+  }
+
+  /** Who may be picked as an assignee: ADMIN → anyone (validated individually elsewhere); MANAGER
+   * → themself or a direct report; everyone else → themself only. */
+  private async assertCanAssign(orgId: string, assigneeIds: string[]): Promise<void> {
+    const role = this.cls.get('role');
+    if (role === 'ADMIN') return;
+    const userId = this.currentUserId();
+    const reportIds = role === 'MANAGER' ? await getDirectReportUserIds(this.prisma, this.cls, orgId) : [];
+    const allowed = new Set([userId, ...reportIds]);
+    if (assigneeIds.some((id) => !allowed.has(id))) {
+      throw new ForbiddenException('You can only assign a task to yourself or your direct reports');
+    }
   }
 
   private toTimeEntrySummary(e: {

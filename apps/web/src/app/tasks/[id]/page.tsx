@@ -21,6 +21,7 @@ import {
 import { AppNav } from '../../../components/app-nav';
 import { FormField } from '../../../components/form-field';
 import { apiFetch } from '../../../lib/api-client';
+import { computeAssignableMembers } from '../../../lib/assignable-members';
 import { useRequireAuth } from '../../../lib/use-require-auth';
 import { TaskChatPanel } from './task-chat-panel';
 
@@ -29,7 +30,7 @@ const STATUS_LABELS: Record<string, string> = {
   IN_PROGRESS: 'In Progress',
   TO_VERIFY: 'To Verify',
   FAILED: 'Failed',
-  DONE: 'Done',
+  DONE: 'Completed',
 };
 
 // A "Completed" personal status only ever means the last timer session ended — it says nothing
@@ -278,13 +279,28 @@ export default function TaskDetailPage() {
     setError(null);
     setTrackingBusy(true);
     try {
-      const updated = await apiFetch<TaskSummary>(`/tasks/${taskId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ status: 'TO_VERIFY' }),
-      });
+      const updated = await apiFetch<TaskSummary>(`/tasks/${taskId}/submit-for-verification`, { method: 'POST' });
       setTask(updated);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to send task for verification.');
+    } finally {
+      setTrackingBusy(false);
+    }
+  }
+
+  /** Admin/manager-only: a Failed task can't be reworked by the assignee on their own — someone
+   * with edit rights has to deliberately take it back to In Progress first. */
+  async function onTakeBackFailedTask() {
+    setError(null);
+    setTrackingBusy(true);
+    try {
+      const updated = await apiFetch<TaskSummary>(`/tasks/${taskId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'IN_PROGRESS' }),
+      });
+      setTask(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to reopen this task.');
     } finally {
       setTrackingBusy(false);
     }
@@ -412,9 +428,16 @@ export default function TaskDetailPage() {
 
   if (status !== 'authenticated') return null;
 
-  const canEdit = task
+  // Subtasks, dependencies, blocker reports, and reopen requests are collaborative — the creator
+  // or an assignee participates the same as an admin/manager.
+  const canCollaborate = task
     ? role === 'ADMIN' || role === 'MANAGER' || task.assignees.some((a) => a.userId === user?.id) || task.createdById === user?.id
     : false;
+  // Editing the task's own fields (reassigning, taking a Failed task back to rework) is an
+  // admin/manager action only — the backend enforces the precise "manager of an assignee" check;
+  // this just decides whether to show the control, so a manager of an unrelated task sees it
+  // hidden here but would also be rejected server-side if they somehow tried anyway.
+  const canEditFields = role === 'ADMIN' || role === 'MANAGER';
 
   const doneCount = subtasks.filter((s) => s.done).length;
   const dependencyOptions = allTasks.filter(
@@ -464,10 +487,9 @@ export default function TaskDetailPage() {
 
                 <div className="mt-4">
                   <p className="mb-1.5 text-sm text-muted">Assignees</p>
-                  {canEdit ? (
+                  {canEditFields ? (
                     <div className="flex flex-col gap-1.5 rounded-card border border-border bg-surface-alt px-3 py-2">
-                      {members
-                        .filter((m) => m.status === 'ACTIVE')
+                      {computeAssignableMembers(members, role, user?.id, task.assignees.map((a) => a.userId))
                         .map((m) => (
                           <label key={m.userId} className="flex items-center gap-2 text-sm text-text">
                             <input
@@ -524,7 +546,7 @@ export default function TaskDetailPage() {
                           <p className="text-sm font-medium text-accent">{task.verifiedByName}</p>
                         </div>
                       ) : (
-                        task.status !== 'TO_VERIFY' && task.status !== 'DONE' && (
+                        task.status !== 'TO_VERIFY' && task.status !== 'DONE' && task.status !== 'FAILED' && (
                           <button
                             type="button"
                             onClick={myAssignment.personalStatus === 'IN_PROGRESS' ? onStopTracking : onStartTracking}
@@ -596,24 +618,33 @@ export default function TaskDetailPage() {
                       Sent for verification — awaiting your manager&apos;s approval.
                     </p>
                   )
-                ) : (
-                  <>
-                    {task.status === 'FAILED' && (
-                      <p className="mb-3 text-sm font-medium text-red-500">
-                        ✗ Verification failed. Rework this task and send it in again when ready.
-                      </p>
-                    )}
-                    {canEdit && (
+                ) : task.status === 'FAILED' ? (
+                  <div className="flex flex-col gap-2">
+                    <p className="text-sm font-medium text-red-500">
+                      ✗ Verification failed. {canEditFields ? 'Take it back to let the assignee rework it.' : 'Ask your manager or an admin to reopen it before resuming work.'}
+                    </p>
+                    {canEditFields && (
                       <button
                         type="button"
-                        onClick={onSendForVerification}
+                        onClick={onTakeBackFailedTask}
                         disabled={trackingBusy}
-                        className="w-full rounded-card border border-green-600 px-4 py-2 text-sm font-medium text-green-600 hover:bg-green-50 disabled:opacity-50"
+                        className="w-full rounded-card border border-border px-4 py-2 text-sm font-medium text-text hover:bg-surface-alt disabled:opacity-50"
                       >
-                        Send for verification
+                        Take back to rework
                       </button>
                     )}
-                  </>
+                  </div>
+                ) : (
+                  myAssignment && (
+                    <button
+                      type="button"
+                      onClick={onSendForVerification}
+                      disabled={trackingBusy}
+                      className="w-full rounded-card border border-green-600 px-4 py-2 text-sm font-medium text-green-600 hover:bg-green-50 disabled:opacity-50"
+                    >
+                      Send for verification
+                    </button>
+                  )
                 )}
               </div>
 
@@ -694,7 +725,7 @@ export default function TaskDetailPage() {
                       ))}
                     </ul>
                   )}
-                  {task.status === 'DONE' && canEdit && !hasPendingReopenRequest && (
+                  {task.status === 'DONE' && canCollaborate && !hasPendingReopenRequest && (
                     <form onSubmit={onRequestReopen} className="flex flex-col gap-2 sm:flex-row sm:items-end">
                       <div className="flex-1">
                         <FormField label="Reason to reopen" value={reopenReason} onChange={setReopenReason} />
@@ -754,7 +785,7 @@ export default function TaskDetailPage() {
                     ))}
                   </ul>
                 )}
-                {canEdit && (
+                {canCollaborate && (
                   <form onSubmit={onReportBlocker} className="flex flex-col gap-2 sm:flex-row sm:items-end">
                     <div className="flex-1">
                       <FormField label="What's blocking this?" value={blockerReason} onChange={setBlockerReason} />
@@ -782,11 +813,11 @@ export default function TaskDetailPage() {
                         type="checkbox"
                         checked={s.done}
                         onChange={() => onToggleSubtask(s)}
-                        disabled={!canEdit}
+                        disabled={!canCollaborate}
                         className="h-4 w-4"
                       />
                       <span className={`flex-1 text-text ${s.done ? 'text-muted line-through' : ''}`}>{s.title}</span>
-                      {canEdit ? (
+                      {canCollaborate ? (
                         <select
                           value={s.assignee?.userId ?? ''}
                           onChange={(e) => onReassignSubtask(s, e.target.value)}
@@ -810,7 +841,7 @@ export default function TaskDetailPage() {
                       ) : (
                         <span className="text-xs text-faint">Unassigned</span>
                       )}
-                      {canEdit && (
+                      {canCollaborate && (
                         <button type="button" onClick={() => onDeleteSubtask(s.id)} className="text-xs text-red-500">
                           Remove
                         </button>
@@ -818,7 +849,7 @@ export default function TaskDetailPage() {
                     </li>
                   ))}
                 </ul>
-                {canEdit && (
+                {canCollaborate && (
                   <form onSubmit={onAddSubtask} className="flex flex-col gap-2 sm:flex-row sm:items-end">
                     <div className="flex-1">
                       <FormField label="New subtask" value={newSubtask} onChange={setNewSubtask} />
@@ -862,7 +893,7 @@ export default function TaskDetailPage() {
                         {d.dependsOnTitle}
                       </Link>
                       <span className="text-xs text-muted">{STATUS_LABELS[d.dependsOnStatus] ?? d.dependsOnStatus}</span>
-                      {canEdit && (
+                      {canCollaborate && (
                         <button type="button" onClick={() => onRemoveDependency(d.id)} className="text-xs text-red-500">
                           Remove
                         </button>
@@ -870,7 +901,7 @@ export default function TaskDetailPage() {
                     </li>
                   ))}
                 </ul>
-                {canEdit && dependencyOptions.length > 0 && (
+                {canCollaborate && dependencyOptions.length > 0 && (
                   <form onSubmit={onAddDependency} className="flex flex-col gap-2 sm:flex-row sm:items-end">
                     <label className="flex flex-1 flex-col gap-1 text-sm text-text">
                       Add a blocker

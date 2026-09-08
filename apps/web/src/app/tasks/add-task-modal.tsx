@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   createTaskSchema,
   TASK_PRIORITIES,
@@ -8,34 +8,60 @@ import {
   type CreateTaskInput,
   type MemberSummary,
   type ProjectSummary,
+  type RoleName,
   type TaskPriorityName,
 } from '@madre-pulse/shared';
 import { FormField } from '../../components/form-field';
+import { computeAssignableMembers } from '../../lib/assignable-members';
 
 interface AddTaskModalProps {
   members: MemberSummary[];
+  role: RoleName | null;
+  currentUserId: string | undefined;
   projects: ProjectSummary[];
   clients: ClientSummary[];
   onClose: () => void;
   onSubmit: (input: CreateTaskInput) => Promise<void>;
 }
 
-export function AddTaskModal({ members, projects, clients, onClose, onSubmit }: AddTaskModalProps) {
+export function AddTaskModal({ members, role, currentUserId, projects, clients, onClose, onSubmit }: AddTaskModalProps) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState<TaskPriorityName>('MEDIUM');
   const [dueDate, setDueDate] = useState('');
   const [projectId, setProjectId] = useState('');
   const [clientId, setClientId] = useState('');
-  const [assigneeIds, setAssigneeIds] = useState<string[]>([]);
+  const [assigneeIds, setAssigneeIds] = useState<string[]>(currentUserId ? [currentUserId] : []);
+  const [assigneeMenuOpen, setAssigneeMenuOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const assigneeMenuRef = useRef<HTMLDivElement>(null);
 
-  const activeMembers = members.filter((m) => m.status === 'ACTIVE');
+  // Only a superior (a manager, over their direct reports, or an admin, over anyone) can assign a
+  // task to someone other than themself.
+  const assignableMembers = computeAssignableMembers(members, role, currentUserId);
+
+  useEffect(() => {
+    function onClickOutside(e: MouseEvent) {
+      if (assigneeMenuRef.current && !assigneeMenuRef.current.contains(e.target as Node)) {
+        setAssigneeMenuOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', onClickOutside);
+    return () => document.removeEventListener('mousedown', onClickOutside);
+  }, []);
 
   function toggleAssignee(userId: string) {
     setAssigneeIds((prev) => (prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]));
   }
+
+  const assigneeSummary =
+    assigneeIds.length === 0
+      ? 'Select assignee(s)'
+      : assigneeIds
+          .map((id) => assignableMembers.find((m) => m.userId === id)?.name)
+          .filter(Boolean)
+          .join(', ') || `${assigneeIds.length} selected`;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -101,24 +127,33 @@ export function AddTaskModal({ members, projects, clients, onClose, onSubmit }: 
 
           <FormField label="Due date" type="date" value={dueDate} onChange={setDueDate} />
 
-          <div className="flex flex-col gap-1 text-sm text-text">
+          <div ref={assigneeMenuRef} className="relative flex flex-col gap-1 text-sm text-text">
             Assignee
-            <div className="flex flex-col gap-1.5 rounded-card border border-border bg-surface-alt px-3 py-2">
-              {activeMembers.length === 0 ? (
-                <span className="text-xs text-muted">No active members yet.</span>
-              ) : (
-                activeMembers.map((m) => (
-                  <label key={m.userId} className="flex items-center gap-2 text-sm text-text">
-                    <input
-                      type="checkbox"
-                      checked={assigneeIds.includes(m.userId)}
-                      onChange={() => toggleAssignee(m.userId)}
-                    />
-                    {m.name}
-                  </label>
-                ))
-              )}
-            </div>
+            <button
+              type="button"
+              onClick={() => setAssigneeMenuOpen((v) => !v)}
+              className="flex items-center justify-between rounded-card border border-border bg-surface-alt px-3 py-2 text-left text-sm text-text"
+            >
+              <span className={assigneeIds.length === 0 ? 'text-muted' : ''}>{assigneeSummary}</span>
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="h-4 w-4 shrink-0 text-muted">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+              </svg>
+            </button>
+            {assigneeMenuOpen && (
+              <div className="absolute top-full z-10 mt-1 flex max-h-48 w-full flex-col gap-1.5 overflow-y-auto rounded-card border border-border bg-surface p-2 shadow-md">
+                {assignableMembers.length === 0 ? (
+                  <span className="px-1 py-1 text-xs text-muted">No one available to assign.</span>
+                ) : (
+                  assignableMembers.map((m) => (
+                    <label key={m.userId} className="flex items-center gap-2 rounded px-1 py-1 text-sm text-text hover:bg-surface-alt">
+                      <input type="checkbox" checked={assigneeIds.includes(m.userId)} onChange={() => toggleAssignee(m.userId)} />
+                      {m.name}
+                      {m.userId === currentUserId && <span className="text-xs text-muted">(you)</span>}
+                    </label>
+                  ))
+                )}
+              </div>
+            )}
           </div>
 
           <label className="flex flex-col gap-1 text-sm text-text">

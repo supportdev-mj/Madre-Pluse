@@ -14,7 +14,7 @@ const STATUS_LABELS: Record<(typeof STATUS_ORDER)[number], string> = {
   IN_PROGRESS: 'In Progress',
   TO_VERIFY: 'To Verify',
   FAILED: 'Failed',
-  DONE: 'Done',
+  DONE: 'Completed',
 };
 const STATUS_COLORS: Record<(typeof STATUS_ORDER)[number], string> = {
   TODO: '#93A6BC',
