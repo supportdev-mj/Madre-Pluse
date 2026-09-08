@@ -243,6 +243,9 @@ export interface TaskSummary {
   canVerify: boolean;
   createdById: string;
   createdByName: string;
+  /** Who approved this task (set only by APPROVE in the verification flow) — null unless status is DONE. */
+  verifiedById: string | null;
+  verifiedByName: string | null;
   createdAt: string;
   updatedAt: string;
 }

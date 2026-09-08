@@ -33,13 +33,16 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 // A "Completed" personal status only ever means the last timer session ended — it says nothing
-// about whether the assignee is idle right now, so it's never shown on its own; only an active
-// IN_PROGRESS session is distinguished from idle.
-function personalStatusLabel(s: AssignmentStatusName): string {
+// about whether the assignee is idle right now, so on its own it's never shown; only an active
+// IN_PROGRESS session is distinguished from idle. Once the whole task is verified Done, everyone's
+// personal status simply reads "Completed" regardless of their own timer state.
+function personalStatusLabel(s: AssignmentStatusName, taskStatus: string): string {
+  if (taskStatus === 'DONE') return 'Completed';
   return s === 'IN_PROGRESS' ? 'In Progress (started)' : 'Not started';
 }
 
-function personalStatusStyle(s: AssignmentStatusName): string {
+function personalStatusStyle(s: AssignmentStatusName, taskStatus: string): string {
+  if (taskStatus === 'DONE') return 'text-green-600';
   return s === 'IN_PROGRESS' ? 'text-amber-600' : 'text-muted';
 }
 
@@ -506,8 +509,8 @@ export default function TaskDetailPage() {
                     <div className="mb-4 flex items-center justify-between gap-4">
                       <div>
                         <p className="text-xs text-muted">Status</p>
-                        <p className={`text-sm font-medium ${personalStatusStyle(myAssignment.personalStatus)}`}>
-                          {personalStatusLabel(myAssignment.personalStatus)}
+                        <p className={`text-sm font-medium ${personalStatusStyle(myAssignment.personalStatus, task.status)}`}>
+                          {personalStatusLabel(myAssignment.personalStatus, task.status)}
                         </p>
                         {myAssignment.personalStatus === 'IN_PROGRESS' && myAssignment.activeStartedAt && (
                           <p className="mt-1 font-mono text-lg text-text">
@@ -515,17 +518,24 @@ export default function TaskDetailPage() {
                           </p>
                         )}
                       </div>
-                      {task.status !== 'TO_VERIFY' && task.status !== 'DONE' && (
-                        <button
-                          type="button"
-                          onClick={myAssignment.personalStatus === 'IN_PROGRESS' ? onStopTracking : onStartTracking}
-                          disabled={trackingBusy}
-                          className={`rounded-card px-4 py-2 text-sm font-medium text-white disabled:opacity-50 ${
-                            myAssignment.personalStatus === 'IN_PROGRESS' ? 'bg-red-500' : 'bg-accent'
-                          }`}
-                        >
-                          {myAssignment.personalStatus === 'IN_PROGRESS' ? 'Stop' : 'Start'}
-                        </button>
+                      {task.status === 'DONE' && task.verifiedByName ? (
+                        <div>
+                          <p className="text-xs text-muted">Verified by</p>
+                          <p className="text-sm font-medium text-accent">{task.verifiedByName}</p>
+                        </div>
+                      ) : (
+                        task.status !== 'TO_VERIFY' && task.status !== 'DONE' && (
+                          <button
+                            type="button"
+                            onClick={myAssignment.personalStatus === 'IN_PROGRESS' ? onStopTracking : onStartTracking}
+                            disabled={trackingBusy}
+                            className={`rounded-card px-4 py-2 text-sm font-medium text-white disabled:opacity-50 ${
+                              myAssignment.personalStatus === 'IN_PROGRESS' ? 'bg-red-500' : 'bg-accent'
+                            }`}
+                          >
+                            {myAssignment.personalStatus === 'IN_PROGRESS' ? 'Stop' : 'Start'}
+                          </button>
+                        )
                       )}
                     </div>
 
@@ -536,8 +546,8 @@ export default function TaskDetailPage() {
                           {task.assignees.map((a) => (
                             <li key={a.userId} className="flex items-center justify-between text-sm">
                               <span className="text-text">{a.name}</span>
-                              <span className={personalStatusStyle(a.personalStatus)}>
-                                {personalStatusLabel(a.personalStatus)}
+                              <span className={personalStatusStyle(a.personalStatus, task.status)}>
+                                {personalStatusLabel(a.personalStatus, task.status)}
                               </span>
                             </li>
                           ))}

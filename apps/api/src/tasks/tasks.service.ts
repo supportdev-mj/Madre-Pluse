@@ -47,6 +47,8 @@ interface TaskRecord {
   }[];
   createdById: string;
   createdBy: { name: string };
+  verifiedById: string | null;
+  verifiedBy: { name: string } | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -55,6 +57,7 @@ const TASK_INCLUDE = {
   project: true,
   client: true,
   createdBy: true,
+  verifiedBy: true,
   assignments: { include: { user: true } },
 } as const;
 
@@ -493,7 +496,11 @@ export class TasksService {
     const updated = await this.prisma.$transaction(async (tx) => {
       const result = await tx.task.update({
         where: { id: taskId },
-        data: { status: nextStatus, completedAt: nextStatus === 'DONE' ? new Date() : null },
+        data: {
+          status: nextStatus,
+          completedAt: nextStatus === 'DONE' ? new Date() : null,
+          verifiedById: nextStatus === 'DONE' ? actorId : null,
+        },
         include: TASK_INCLUDE,
       });
       await tx.taskActivity.create({ data: { taskId, actorId, type: 'STATUS_CHANGED', message } });
@@ -547,6 +554,8 @@ export class TasksService {
       })),
       createdById: t.createdById,
       createdByName: t.createdBy.name,
+      verifiedById: t.verifiedById,
+      verifiedByName: t.verifiedBy?.name ?? null,
       createdAt: t.createdAt.toISOString(),
       updatedAt: t.updatedAt.toISOString(),
       canVerify,
