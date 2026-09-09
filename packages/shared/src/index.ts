@@ -30,10 +30,6 @@ export interface AuthUser {
   initials: string;
   avatarColor: string;
   isSuperAdmin: boolean;
-  /** True if anyone's Membership.managerId points at this user's own membership in the current
-   * org — used to extend manager-like task visibility and dashboard access to a plain "user" role
-   * who nonetheless has people reporting to them in the org chart. */
-  hasDirectReports: boolean;
 }
 
 export interface AuthOrg {

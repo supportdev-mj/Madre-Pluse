@@ -87,7 +87,7 @@ function NavIcon({ label }: { label: string }) {
 }
 
 const links: Array<{ href: string; label: string; roles?: RoleName[] }> = [
-  { href: '/dashboard', label: 'Dashboard', roles: ['ADMIN', 'MANAGER'] },
+  { href: '/dashboard', label: 'Dashboard' },
   { href: '/tasks', label: 'Tasks' },
   { href: '/team', label: 'Team' },
   { href: '/clients', label: 'Clients' },
@@ -103,19 +103,18 @@ export function AppNav() {
   const { role, user, logout } = useAuth();
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
-  // Dashboard access is hierarchy-based, not just role-based (see DashboardService.getSummary) —
-  // a plain "user" who nonetheless has people reporting to them gets it too.
-  const canSeeDashboard = role === 'ADMIN' || role === 'MANAGER' || !!user?.hasDirectReports;
   const visibleLinks = [
-    ...links.filter((l) => (l.href === '/dashboard' ? canSeeDashboard : !l.roles || (role && l.roles.includes(role)))),
+    ...links.filter((l) => !l.roles || (role && l.roles.includes(role))),
     ...(user?.isSuperAdmin ? superAdminLinks : []),
   ];
 
   const sidebarBody = (
     <div className="flex h-full w-60 flex-col bg-surface p-4">
       <div className="mb-6 px-2">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/logo.png" alt="Madre Pulse" className="h-11 w-auto rounded-md dark:bg-white dark:p-1" />
+        <Link href="/dashboard" onClick={() => setMobileOpen(false)} className="inline-block rounded-md dark:bg-white dark:p-1">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.png" alt="Madre Pulse" className="h-11 w-auto rounded-md" />
+        </Link>
       </div>
 
       <nav className="flex flex-1 flex-col gap-1">
@@ -174,8 +173,10 @@ export function AppNav() {
             <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5M3.75 17.25h16.5" />
           </svg>
         </button>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/logo.png" alt="Madre Pulse" className="h-8 w-auto rounded dark:bg-white dark:p-1" />
+        <Link href="/dashboard" className="inline-block rounded dark:bg-white dark:p-1">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.png" alt="Madre Pulse" className="h-8 w-auto rounded" />
+        </Link>
         <NotificationBell />
       </div>
 
