@@ -28,3 +28,10 @@ body {
   background: var(--color-canvas);
   color: var(--color-text);
 }
+
+/* Dashboard hero card's decorative heartbeat trace — see PulseLine in app/dashboard/page.tsx. */
+@keyframes pulse-scan {
+  to {
+    transform: translateX(-100px);
+  }
+}

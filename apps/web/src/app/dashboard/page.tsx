@@ -118,6 +118,32 @@ function AnimatedNumber({ value }: { value: number }) {
   return <>{useAnimatedNumber(value)}</>;
 }
 
+/** A quiet nod to the app's name — a heartbeat-monitor trace that endlessly scrolls along the
+ * bottom edge of the hero card. Built as one long tiled path (each blip is 100 viewBox units) so
+ * a perfectly seamless loop only needs to shift by exactly one blip's width; kept low-opacity and
+ * edge-faded so it reads as background texture, not a distraction. */
+function PulseLine() {
+  const unit = (o: number) =>
+    `M${o},16 H${o + 12} L${o + 16},11 L${o + 20},16 H${o + 34} L${o + 37},21 L${o + 40},2 L${o + 43},28 L${o + 46},16 H${o + 62} L${o + 66},12 L${o + 70},16 H${o + 100}`;
+  const path = Array.from({ length: 24 }, (_, i) => unit(i * 100)).join(' ');
+
+  return (
+    <div
+      className="pointer-events-none absolute inset-x-0 bottom-0 h-8 opacity-25"
+      style={{ maskImage: 'linear-gradient(to right, transparent, black 12%, black 88%, transparent)' }}
+    >
+      <svg
+        viewBox="0 0 2400 32"
+        preserveAspectRatio="none"
+        className="h-full w-[2400px]"
+        style={{ animation: 'pulse-scan 3.2s linear infinite' }}
+      >
+        <path d={path} fill="none" stroke="var(--color-accent)" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </div>
+  );
+}
+
 function Icon({ path, className = 'h-4 w-4' }: { path: string; className?: string }) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor" className={className}>
@@ -304,7 +330,8 @@ export default function DashboardPage() {
           <p className="text-muted">Loading…</p>
         ) : (
           <div className="flex flex-col gap-4">
-            <div className="overflow-hidden rounded-card border border-border bg-surface">
+            <div className="relative overflow-hidden rounded-card border border-border bg-surface">
+              <PulseLine />
               <div className="flex flex-wrap items-center justify-between gap-3 p-5" style={HERO_GRID_BG}>
                 <div>
                   <p className="flex items-baseline font-mono text-xs font-bold uppercase tracking-wide text-muted">
