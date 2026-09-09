@@ -307,8 +307,15 @@ export default function DashboardPage() {
             <div className="overflow-hidden rounded-card border border-border bg-surface">
               <div className="flex flex-wrap items-center justify-between gap-3 p-5" style={HERO_GRID_BG}>
                 <div>
-                  <p className="font-mono text-xs font-bold uppercase tracking-wide text-muted">
-                    {canFilterByTeam ? (scope === 'personal' ? 'Personal overview' : 'Team overview') : 'Personal overview'}
+                  <p className="flex items-baseline font-mono text-xs font-bold uppercase tracking-wide text-muted">
+                    <span
+                      className={`inline-block overflow-hidden whitespace-nowrap transition-[width] duration-300 ease-out ${
+                        scope === 'personal' ? 'w-[9ch]' : 'w-[5ch]'
+                      }`}
+                    >
+                      {scope === 'personal' ? 'Personal' : 'Team'}
+                    </span>
+                    <span>&nbsp;overview</span>
                   </p>
                   <h1 className="mt-1 text-xl font-bold tracking-tight text-text">
                     {greeting()}, {user?.name?.split(' ')[0] ?? 'there'}
