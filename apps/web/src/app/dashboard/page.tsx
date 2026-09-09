@@ -229,16 +229,18 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [scope, setScope] = useState<DashboardScopeName>('personal');
-  const canView = role === 'ADMIN' || role === 'MANAGER';
+  // Only an admin/manager has a broader "team" to switch to — a plain user's Team view would be
+  // identical to Personal, so they never see the toggle and always get the personal-only summary.
+  const canFilterByTeam = role === 'ADMIN' || role === 'MANAGER';
 
   useEffect(() => {
-    if (status !== 'authenticated' || !canView) return;
+    if (status !== 'authenticated') return;
     setLoading(true);
     apiFetch<DashboardSummary>(`/dashboard?scope=${scope}`)
       .then(setSummary)
       .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load dashboard'))
       .finally(() => setLoading(false));
-  }, [status, canView, scope]);
+  }, [status, scope]);
 
   if (status !== 'authenticated') return null;
 
@@ -252,12 +254,7 @@ export default function DashboardPage() {
     <div className="min-h-screen sm:pl-60">
       <AppNav />
       <main className="mx-auto max-w-6xl px-4 pb-4 pt-16 sm:px-8 sm:pb-8 sm:pt-8">
-        {!canView ? (
-          <>
-            <h1 className="mb-6 text-xl font-bold text-text">Dashboard</h1>
-            <p className="text-sm text-muted">Only admins and managers can view the dashboard.</p>
-          </>
-        ) : error ? (
+        {error ? (
           <p className="text-sm text-red-500">{error}</p>
         ) : loading || !summary ? (
           <p className="text-muted">Loading…</p>
@@ -267,7 +264,7 @@ export default function DashboardPage() {
               <div className="flex flex-wrap items-center justify-between gap-3 p-5" style={HERO_GRID_BG}>
                 <div>
                   <p className="font-mono text-xs font-bold uppercase tracking-wide text-muted">
-                    {scope === 'personal' ? 'Personal overview' : 'Team overview'}
+                    {canFilterByTeam ? (scope === 'personal' ? 'Personal overview' : 'Team overview') : 'Personal overview'}
                   </p>
                   <h1 className="mt-1 text-xl font-bold tracking-tight text-text">
                     {greeting()}, {user?.name?.split(' ')[0] ?? 'there'}
@@ -279,18 +276,20 @@ export default function DashboardPage() {
                   </p>
                 </div>
                 <div className="flex items-center gap-3">
-                  <div className="flex overflow-hidden rounded-lg border border-border bg-surface text-sm">
-                    {(['personal', 'team'] as const).map((s) => (
-                      <button
-                        key={s}
-                        type="button"
-                        onClick={() => setScope(s)}
-                        className={`px-3 py-1.5 capitalize ${scope === s ? 'bg-accent text-white' : 'text-muted hover:text-text'}`}
-                      >
-                        {s}
-                      </button>
-                    ))}
-                  </div>
+                  {canFilterByTeam && (
+                    <div className="flex overflow-hidden rounded-lg border border-border bg-surface text-sm">
+                      {(['personal', 'team'] as const).map((s) => (
+                        <button
+                          key={s}
+                          type="button"
+                          onClick={() => setScope(s)}
+                          className={`px-3 py-1.5 capitalize ${scope === s ? 'bg-accent text-white' : 'text-muted hover:text-text'}`}
+                        >
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <Link
                     href="/tasks"
                     className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3.5 py-2 text-sm font-semibold text-white hover:brightness-95"

@@ -1,13 +1,13 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { dashboardQuerySchema, type DashboardQuery } from '@madre-pulse/shared';
-import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
 import { DashboardService } from './dashboard.service';
 
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('ADMIN', 'MANAGER')
+// Open to every authenticated user — DashboardService.getSummary() scopes the data itself
+// (personal-only, or the viewer's normal visibility breadth for "team"), so there's nothing left
+// for a role guard to gate here.
+@UseGuards(JwtAuthGuard)
 @Controller('dashboard')
 export class DashboardController {
   constructor(private readonly dashboardService: DashboardService) {}
