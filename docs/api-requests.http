@@ -76,7 +76,7 @@ Content-Type: application/json
   "status": "SUSPENDED"
 }
 
-### Google Meet integration (Slice 19) — step 1 only: connect/disconnect. No transcript endpoints yet.
+### Google Meet integration (Slice 19, sync added Slice 22) — connect/disconnect/sync.
 ### Requires GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI/TOKEN_ENCRYPTION_KEY configured — see DEVELOPER.md.
 
 ### Check whether this org has connected Google Workspace
@@ -88,8 +88,54 @@ Authorization: Bearer {{login.response.body.accessToken}}
 GET {{baseUrl}}/integrations/google/connect-url
 Authorization: Bearer {{login.response.body.accessToken}}
 
+### Sync this org's Google Meet transcripts into the MOM queue right now — ADMIN only.
+### Only produces real results once Google Workspace is connected (above) with a real Meet
+### API-scoped OAuth app AND this org has an AI key set below.
+POST {{baseUrl}}/integrations/google/sync
+Authorization: Bearer {{login.response.body.accessToken}}
+
 ### Disconnect Google Workspace — ADMIN only
 DELETE {{baseUrl}}/integrations/google
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### MOM: PDF upload / AI-extracted task queue (Slice 21). Requires an org AI key set below first.
+
+### Check whether this org has an AI key configured for MOM extraction (never returns the key itself) — ADMIN only
+GET {{baseUrl}}/mom/settings
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### Set or replace this org's AI key — ADMIN only
+POST {{baseUrl}}/mom/settings
+Authorization: Bearer {{login.response.body.accessToken}}
+Content-Type: application/json
+
+{
+  "apiKey": "sk-ant-your-real-key-here"
+}
+
+### Upload a MoM PDF — ADMIN or MANAGER. REST Client extension: point @file at a real PDF on disk.
+# @file = ./sample-mom.pdf
+POST {{baseUrl}}/mom/uploads
+Authorization: Bearer {{login.response.body.accessToken}}
+Content-Type: multipart/form-data; boundary=boundary
+
+--boundary
+Content-Disposition: form-data; name="file"; filename="sample-mom.pdf"
+Content-Type: application/pdf
+
+< {{file}}
+--boundary--
+
+### List pending MOM candidates — ADMIN/MANAGER see every org candidate, others only ones matched to them
+GET {{baseUrl}}/mom/candidates?status=PENDING
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### Accept a candidate — creates a real Task. 400 unless title/description/dueDate/assigneeId are all set
+POST {{baseUrl}}/mom/candidates/{{candidateId}}/accept
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### Reject a candidate
+POST {{baseUrl}}/mom/candidates/{{candidateId}}/reject
 Authorization: Bearer {{login.response.body.accessToken}}
 
 ### Platform AI provider settings (Slice 20) — superadmin only, platform-wide (not per-org).

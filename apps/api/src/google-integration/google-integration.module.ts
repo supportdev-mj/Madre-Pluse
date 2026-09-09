@@ -7,5 +7,6 @@ import { GoogleIntegrationService } from './google-integration.service';
   imports: [AuthModule],
   controllers: [GoogleIntegrationController],
   providers: [GoogleIntegrationService],
+  exports: [GoogleIntegrationService],
 })
 export class GoogleIntegrationModule {}

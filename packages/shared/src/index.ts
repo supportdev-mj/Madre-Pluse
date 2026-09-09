@@ -650,6 +650,9 @@ export interface MomAiSettingsStatus {
 export const MOM_CANDIDATE_STATUSES = ['PENDING', 'ACCEPTED', 'REJECTED'] as const;
 export type MomCandidateStatusName = (typeof MOM_CANDIDATE_STATUSES)[number];
 
+export const MOM_UPLOAD_SOURCES = ['PDF', 'GOOGLE_MEET'] as const;
+export type MomUploadSourceName = (typeof MOM_UPLOAD_SOURCES)[number];
+
 export const listMomCandidatesQuerySchema = z.object({
   status: z.enum(MOM_CANDIDATE_STATUSES).optional(),
 });
@@ -681,6 +684,7 @@ export interface MomTaskCandidateSummary {
   id: string;
   momUploadId: string;
   momUploadFileName: string;
+  momUploadSource: MomUploadSourceName;
   title: string;
   description: string;
   suggestedAssigneeName: string | null;
@@ -702,4 +706,13 @@ export interface MomUploadResult {
   itemsNew: number;
   itemsSkipped: number;
   candidates: MomTaskCandidateSummary[];
+}
+
+// --- Slice 22: Google Meet transcript sync — a second source feeding the same MOM queue above ---
+
+export interface GoogleMeetSyncResult {
+  meetingsChecked: number;
+  meetingsSynced: number;
+  itemsNew: number;
+  itemsSkipped: number;
 }

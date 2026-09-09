@@ -10,5 +10,6 @@ import { MomService } from './mom.service';
   imports: [AuthModule, StorageModule, TasksModule],
   controllers: [MomController],
   providers: [MomService, MomExtractionService],
+  exports: [MomService],
 })
 export class MomModule {}

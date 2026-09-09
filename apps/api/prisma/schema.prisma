@@ -16,6 +16,9 @@
 // Deliberately NOT wired to real billing/payments (still Phase 3) and NOT self-service — see DEVELOPER.md.
 // Slice 21: OrgAiSettings / MomUpload / MomTaskCandidate — per-org "upload a MoM PDF, AI extracts
 // action items into a review queue, accept/edit/reject before it becomes a real Task" pipeline.
+// Slice 22: MomUpload.source — a synced Google Meet transcript feeds the exact same pipeline as a
+// PDF upload (same OrgAiSettings key, same MomTaskCandidate review queue), via GoogleIntegration's
+// existing OAuth connection. No new models needed, just a second way to populate MomUpload.
 
 generator client {
   provider      = "prisma-client-js"
@@ -115,6 +118,13 @@ enum MomCandidateStatus {
   PENDING
   ACCEPTED
   REJECTED
+}
+
+// Slice 22: where a MomUpload's content came from — an uploaded PDF, or a synced Google Meet
+// transcript. Both feed the exact same extraction -> dedupe -> review-queue pipeline below.
+enum MomUploadSource {
+  PDF
+  GOOGLE_MEET
 }
 
 model Organization {
@@ -574,18 +584,23 @@ model OrgAiSettings {
   @@map("org_ai_settings")
 }
 
-// One row per uploaded MoM PDF. The extraction result (one row per action item found) lives in
+// One row per uploaded MoM PDF, or per synced Google Meet transcript (Slice 22) — same shape,
+// different source. The extraction result (one row per action item found) lives in
 // MomTaskCandidate below — kept separate so a single upload can produce many review-queue items.
+// storageKey/sizeBytes are PDF-only (nullable); sourceMeetingRecordId/rawTranscript are Meet-only.
 model MomUpload {
-  id           String   @id @default(cuid())
-  orgId        String
-  uploadedById String
-  fileName     String
-  storageKey   String
-  sizeBytes    Int
-  itemsFound   Int
-  itemsNew     Int
-  createdAt    DateTime @default(now())
+  id                    String          @id @default(cuid())
+  orgId                 String
+  uploadedById          String
+  source                MomUploadSource @default(PDF)
+  fileName              String
+  storageKey            String?
+  sizeBytes             Int?
+  sourceMeetingRecordId String?         @unique
+  rawTranscript         String?
+  itemsFound            Int
+  itemsNew              Int
+  createdAt             DateTime        @default(now())
 
   org        Organization       @relation(fields: [orgId], references: [id], onDelete: Cascade)
   uploadedBy User               @relation("MomUploader", fields: [uploadedById], references: [id])
