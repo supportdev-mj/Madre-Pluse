@@ -20,7 +20,10 @@ interface GoogleUserInfo {
   email: string;
 }
 
-const SCOPES = ['https://www.googleapis.com/auth/drive.readonly', 'https://www.googleapis.com/auth/userinfo.email'];
+// meetings.space.readonly covers reading conference records and their transcripts via the Meet
+// REST API (conferenceRecords.transcripts.entries) — no Drive access needed, since the Meet API
+// returns structured transcript entries directly rather than a Google Doc to parse.
+const SCOPES = ['https://www.googleapis.com/auth/meetings.space.readonly', 'https://www.googleapis.com/auth/userinfo.email'];
 
 @Injectable()
 export class GoogleIntegrationService {
@@ -123,6 +126,49 @@ export class GoogleIntegrationService {
   async getStatus(orgId: string): Promise<GoogleIntegrationStatus> {
     const integration = await this.prisma.googleIntegration.findUnique({ where: { orgId } });
     return { connected: !!integration, googleEmail: integration?.googleEmail ?? null };
+  }
+
+  /**
+   * Exchanges the org's stored refresh token for a fresh access token. Refresh tokens don't
+   * expire in normal use, so this doesn't bother caching the access token — every sync run just
+   * asks Google for a new one, keeping this stateless rather than tracking a ~1 hour expiry.
+   */
+  async getAccessToken(orgId: string): Promise<string> {
+    const integration = await this.prisma.googleIntegration.findUnique({ where: { orgId } });
+    if (!integration) {
+      throw new BadRequestException('Google Workspace is not connected for this organization');
+    }
+
+    const clientId = this.config.get('GOOGLE_CLIENT_ID', { infer: true });
+    const clientSecret = this.config.get('GOOGLE_CLIENT_SECRET', { infer: true });
+    const encryptionKey = this.config.get('TOKEN_ENCRYPTION_KEY', { infer: true });
+    if (!clientId || !clientSecret || !encryptionKey) {
+      throw new BadRequestException('Google integration is not configured on this server yet');
+    }
+
+    const refreshToken = decryptSecret(integration.refreshTokenEncrypted, encryptionKey);
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        refresh_token: refreshToken,
+        grant_type: 'refresh_token',
+      }),
+    });
+    if (!tokenRes.ok) {
+      this.logger.warn(`Google access token refresh failed for org ${orgId}: ${tokenRes.status} ${await tokenRes.text()}`);
+      throw new BadRequestException('Failed to refresh Google access token');
+    }
+    const tokens = (await tokenRes.json()) as GoogleTokenResponse;
+    return tokens.access_token;
+  }
+
+  /** Orgs with an active Google connection, each paired with who connected it — used as the
+   * "actor" for auto-synced content, since a background job has no real user in context. */
+  async listConnectedOrgs(): Promise<Array<{ orgId: string; connectedById: string }>> {
+    return this.prisma.googleIntegration.findMany({ select: { orgId: true, connectedById: true } });
   }
 
   async disconnect(orgId: string): Promise<void> {

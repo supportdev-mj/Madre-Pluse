@@ -8,6 +8,7 @@ import type {
   MomCandidateStatusName,
   MomTaskCandidateSummary,
   MomUploadResult,
+  MomUploadSourceName,
   TaskPriorityName,
   UpdateMomAiSettingsInput,
   UpdateMomCandidateInput,
@@ -26,7 +27,7 @@ const DEFAULT_MODEL = 'claude-sonnet-5';
 interface CandidateRecord {
   id: string;
   momUploadId: string;
-  momUpload: { fileName: string };
+  momUpload: { fileName: string; source: string };
   title: string;
   description: string;
   suggestedAssigneeName: string | null;
@@ -44,7 +45,7 @@ interface CandidateRecord {
 }
 
 const CANDIDATE_INCLUDE = {
-  momUpload: { select: { fileName: true } },
+  momUpload: { select: { fileName: true, source: true } },
   reviewedBy: { select: { name: true } },
 } as const;
 
@@ -88,42 +89,88 @@ export class MomService {
     const orgId = requireOrgId(this.cls);
     const uploadedById = this.currentUserId();
 
-    const settings = await this.prisma.orgAiSettings.findUnique({ where: { orgId } });
-    if (!settings) {
-      throw new BadRequestException(
-        'AI extraction is not configured for this organization yet. Ask an admin to add an API key in Settings.',
-      );
-    }
-    const encryptionKey = this.config.get('TOKEN_ENCRYPTION_KEY', { infer: true });
-    const apiKey = decryptSecret(settings.apiKeyEncrypted, encryptionKey);
-
-    const extracted = await this.extraction.extract(file.buffer.toString('base64'), apiKey, settings.model);
-
-    const { unique, skipped } = await this.dedupe(orgId, extracted);
-    const resolved = await this.resolveAssignees(orgId, unique);
+    const { apiKey, model } = await this.requireOrgAiSettings(orgId);
+    const extracted = await this.extraction.extract(file.buffer.toString('base64'), apiKey, model);
 
     const key = `${orgId}/mom/${randomBytes(8).toString('hex')}-${this.sanitizeFileName(file.originalname)}`;
     await this.storage.upload(key, file.buffer, file.mimetype);
 
+    return this.ingest(orgId, uploadedById, extracted, {
+      source: 'PDF',
+      fileName: file.originalname,
+      storageKey: key,
+      sizeBytes: file.size,
+    });
+  }
+
+  /**
+   * Same pipeline as upload(), for a Google Meet transcript instead of a PDF. Called both from a
+   * foreground "Sync now" request (CLS available) and from the background meeting-sync job (no
+   * CLS/request context at all) — so, unlike upload(), it takes orgId/actorId explicitly rather
+   * than reading them off this.cls. Returns null if this meeting was already synced before
+   * (sourceMeetingRecordId dedup), so callers can skip it without treating that as an error.
+   */
+  async ingestGoogleMeetTranscript(
+    orgId: string,
+    actorId: string,
+    meetingTitle: string,
+    sourceMeetingRecordId: string,
+    transcript: string,
+  ): Promise<MomUploadResult | null> {
+    const already = await this.prisma.momUpload.findUnique({ where: { sourceMeetingRecordId } });
+    if (already) return null;
+
+    const { apiKey, model } = await this.requireOrgAiSettings(orgId);
+    const extracted = await this.extraction.extractFromTranscript(transcript, apiKey, model);
+
+    return this.ingest(orgId, actorId, extracted, {
+      source: 'GOOGLE_MEET',
+      fileName: meetingTitle,
+      sourceMeetingRecordId,
+      rawTranscript: transcript,
+    });
+  }
+
+  /** Shared by both ingestion sources: dedupe against existing candidates/tasks, resolve
+   * assignees by name, then create the MomUpload + its MomTaskCandidate rows in one transaction. */
+  private async ingest(
+    orgId: string,
+    uploadedById: string,
+    extracted: ExtractedMomItem[],
+    upload: {
+      source: MomUploadSourceName;
+      fileName: string;
+      storageKey?: string;
+      sizeBytes?: number;
+      sourceMeetingRecordId?: string;
+      rawTranscript?: string;
+    },
+  ): Promise<MomUploadResult> {
+    const { unique, skipped } = await this.dedupe(orgId, extracted);
+    const resolved = await this.resolveAssignees(orgId, unique);
+
     const candidates = await this.prisma.$transaction(async (tx) => {
-      const upload = await tx.momUpload.create({
+      const created = await tx.momUpload.create({
         data: {
           orgId,
           uploadedById,
-          fileName: file.originalname,
-          storageKey: key,
-          sizeBytes: file.size,
+          source: upload.source,
+          fileName: upload.fileName,
+          storageKey: upload.storageKey ?? null,
+          sizeBytes: upload.sizeBytes ?? null,
+          sourceMeetingRecordId: upload.sourceMeetingRecordId ?? null,
+          rawTranscript: upload.rawTranscript ?? null,
           itemsFound: extracted.length,
           itemsNew: resolved.length,
         },
       });
 
-      const created: CandidateRecord[] = [];
+      const candidates: CandidateRecord[] = [];
       for (const item of resolved) {
         const candidate = await tx.momTaskCandidate.create({
           data: {
             orgId,
-            momUploadId: upload.id,
+            momUploadId: created.id,
             title: item.title,
             description: item.description || item.title,
             suggestedAssigneeName: item.responsibleName || null,
@@ -134,9 +181,9 @@ export class MomService {
           },
           include: CANDIDATE_INCLUDE,
         });
-        created.push(candidate);
+        candidates.push(candidate);
       }
-      return created;
+      return candidates;
     });
 
     return {
@@ -154,8 +201,20 @@ export class MomService {
     const orgId = requireOrgId(this.cls);
     const upload = await this.prisma.momUpload.findFirst({ where: { id, orgId } });
     if (!upload) throw new NotFoundException('Upload not found');
-    await this.storage.delete(upload.storageKey);
+    if (upload.storageKey) await this.storage.delete(upload.storageKey);
     await this.prisma.momUpload.delete({ where: { id } });
+  }
+
+  /** Throws the same "ask an admin to configure this" message upload() already used, for either ingestion path. */
+  private async requireOrgAiSettings(orgId: string): Promise<{ apiKey: string; model: string }> {
+    const settings = await this.prisma.orgAiSettings.findUnique({ where: { orgId } });
+    if (!settings) {
+      throw new BadRequestException(
+        'AI extraction is not configured for this organization yet. Ask an admin to add an API key in Settings.',
+      );
+    }
+    const encryptionKey = this.config.get('TOKEN_ENCRYPTION_KEY', { infer: true });
+    return { apiKey: decryptSecret(settings.apiKeyEncrypted, encryptionKey), model: settings.model };
   }
 
   async listCandidates(query: ListMomCandidatesQuery): Promise<MomTaskCandidateSummary[]> {
@@ -339,6 +398,7 @@ export class MomService {
       id: c.id,
       momUploadId: c.momUploadId,
       momUploadFileName: c.momUpload.fileName,
+      momUploadSource: c.momUpload.source as MomUploadSourceName,
       title: c.title,
       description: c.description,
       suggestedAssigneeName: c.suggestedAssigneeName,
