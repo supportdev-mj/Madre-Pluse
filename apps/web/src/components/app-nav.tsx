@@ -87,7 +87,7 @@ function NavIcon({ label }: { label: string }) {
 }
 
 const links: Array<{ href: string; label: string; roles?: RoleName[] }> = [
-  { href: '/dashboard', label: 'Dashboard' },
+  { href: '/dashboard', label: 'Dashboard', roles: ['ADMIN', 'MANAGER'] },
   { href: '/tasks', label: 'Tasks' },
   { href: '/team', label: 'Team' },
   { href: '/clients', label: 'Clients' },

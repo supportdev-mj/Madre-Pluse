@@ -2,7 +2,14 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import type { DashboardActivityItem, DashboardMemberWorkload, DashboardSummary, TaskPriorityName, TaskStatusName } from '@madre-pulse/shared';
+import type {
+  DashboardActivityItem,
+  DashboardMemberWorkload,
+  DashboardScopeName,
+  DashboardSummary,
+  TaskPriorityName,
+  TaskStatusName,
+} from '@madre-pulse/shared';
 import { AppNav } from '../../components/app-nav';
 import { apiFetch } from '../../lib/api-client';
 import { useAuth } from '../../lib/auth-context';
@@ -221,15 +228,17 @@ export default function DashboardPage() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [scope, setScope] = useState<DashboardScopeName>('personal');
   const canView = role === 'ADMIN' || role === 'MANAGER';
 
   useEffect(() => {
     if (status !== 'authenticated' || !canView) return;
-    apiFetch<DashboardSummary>('/dashboard')
+    setLoading(true);
+    apiFetch<DashboardSummary>(`/dashboard?scope=${scope}`)
       .then(setSummary)
       .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load dashboard'))
       .finally(() => setLoading(false));
-  }, [status, canView]);
+  }, [status, canView, scope]);
 
   if (status !== 'authenticated') return null;
 
@@ -257,7 +266,9 @@ export default function DashboardPage() {
             <div className="overflow-hidden rounded-card border border-border bg-surface">
               <div className="flex flex-wrap items-center justify-between gap-3 p-5" style={HERO_GRID_BG}>
                 <div>
-                  <p className="font-mono text-xs font-bold uppercase tracking-wide text-muted">Manager overview</p>
+                  <p className="font-mono text-xs font-bold uppercase tracking-wide text-muted">
+                    {scope === 'personal' ? 'Personal overview' : 'Team overview'}
+                  </p>
                   <h1 className="mt-1 text-xl font-bold tracking-tight text-text">
                     {greeting()}, {user?.name?.split(' ')[0] ?? 'there'}
                   </h1>
@@ -267,13 +278,27 @@ export default function DashboardPage() {
                     {done} done
                   </p>
                 </div>
-                <Link
-                  href="/tasks"
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3.5 py-2 text-sm font-semibold text-white hover:brightness-95"
-                >
-                  <Icon path={ICON_PATHS.plus} className="h-4 w-4" />
-                  New task
-                </Link>
+                <div className="flex items-center gap-3">
+                  <div className="flex overflow-hidden rounded-lg border border-border bg-surface text-sm">
+                    {(['personal', 'team'] as const).map((s) => (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => setScope(s)}
+                        className={`px-3 py-1.5 capitalize ${scope === s ? 'bg-accent text-white' : 'text-muted hover:text-text'}`}
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                  <Link
+                    href="/tasks"
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3.5 py-2 text-sm font-semibold text-white hover:brightness-95"
+                  >
+                    <Icon path={ICON_PATHS.plus} className="h-4 w-4" />
+                    New task
+                  </Link>
+                </div>
               </div>
             </div>
 

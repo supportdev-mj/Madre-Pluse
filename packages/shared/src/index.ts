@@ -524,6 +524,17 @@ export interface DashboardActivityItem {
   createdAt: string;
 }
 
+// "personal" = just the viewer's own tasks; "team" = the viewer's own tasks plus their direct
+// reports' (or, for an admin, the whole org) — same breadth Dashboard access has always had.
+// Member Workload is unaffected by this filter either way — it always shows the full team.
+export const DASHBOARD_SCOPES = ['personal', 'team'] as const;
+export type DashboardScopeName = (typeof DASHBOARD_SCOPES)[number];
+
+export const dashboardQuerySchema = z.object({
+  scope: z.enum(DASHBOARD_SCOPES).optional(),
+});
+export type DashboardQuery = z.infer<typeof dashboardQuerySchema>;
+
 export interface DashboardSummary {
   statusCounts: Record<TaskStatusName, number>;
   priorityCounts: Record<TaskPriorityName, number>;

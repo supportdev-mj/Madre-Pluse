@@ -1,6 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
-import type { DashboardSummary, TaskPriorityName, TaskStatusName } from '@madre-pulse/shared';
+import type { DashboardQuery, DashboardSummary, TaskPriorityName, TaskStatusName } from '@madre-pulse/shared';
 import type { AppClsStore } from '../common/tenant/cls-store.type';
 import { requireOrgId } from '../common/tenant/require-org-id';
 import { getTaskVisibleUserIds, taskVisibilityWhere } from '../common/tenant/task-visibility';
@@ -17,15 +17,17 @@ export class DashboardService {
     private readonly cls: ClsService<AppClsStore>,
   ) {}
 
-  // Everyone gets a dashboard — it just shows whatever's already visible to them: an admin sees
-  // the whole org, a manager (or anyone else with direct reports) sees themself + their reports,
-  // and a plain user with none sees only their own tasks. No separate access check needed here;
-  // getTaskVisibleUserIds below is the same scoping the Tasks list already uses.
-  async getSummary(): Promise<DashboardSummary> {
+  /** "personal" (the default) scopes every card to just the viewer's own tasks; "team" widens it
+   * to their normal Dashboard breadth — themself + direct reports for a manager, the whole org for
+   * an admin. Member Workload always uses the full team breadth regardless of scope. */
+  async getSummary(query: DashboardQuery): Promise<DashboardSummary> {
     const orgId = requireOrgId(this.cls);
+    const userId = this.currentUserId();
     const now = new Date();
     const sevenDaysAgo = new Date(now.getTime() - SEVEN_DAYS_MS);
-    const visibleUserIds = await getTaskVisibleUserIds(this.prisma, this.cls, orgId);
+    const fullVisibleUserIds = await getTaskVisibleUserIds(this.prisma, this.cls, orgId);
+    const scope = query.scope ?? 'personal';
+    const visibleUserIds = scope === 'personal' ? [userId] : fullVisibleUserIds;
     const taskWhere = taskVisibilityWhere(visibleUserIds);
 
     const [statusGroups, priorityGroups, overdueCount, overdueTasksRaw, completedLast7Days, activeMembers, onTimeStats, recentActivityRaw] =
@@ -41,7 +43,7 @@ export class DashboardService {
         }),
         this.prisma.task.count({ where: { orgId, completedAt: { gte: sevenDaysAgo }, ...taskWhere } }),
         this.prisma.membership.findMany({
-          where: { orgId, status: 'ACTIVE', ...(visibleUserIds ? { userId: { in: visibleUserIds } } : {}) },
+          where: { orgId, status: 'ACTIVE', ...(fullVisibleUserIds ? { userId: { in: fullVisibleUserIds } } : {}) },
           include: { user: true },
         }),
         this.prisma.task.findMany({
@@ -103,5 +105,11 @@ export class DashboardService {
         createdAt: a.createdAt.toISOString(),
       })),
     };
+  }
+
+  private currentUserId(): string {
+    const userId = this.cls.get('userId');
+    if (!userId) throw new ForbiddenException();
+    return userId;
   }
 }
