@@ -111,7 +111,11 @@ export function AppNav() {
   const sidebarBody = (
     <div className="flex h-full w-60 flex-col bg-surface p-4">
       <div className="mb-6 px-2">
-        <Link href="/dashboard" onClick={() => setMobileOpen(false)} className="inline-block rounded-md bg-transparent p-1 dark:bg-white">
+        <Link
+          href="/dashboard"
+          onClick={() => setMobileOpen(false)}
+          className="inline-block rounded-md bg-transparent p-2 dark:bg-white dark:[-webkit-mask-image:radial-gradient(ellipse_at_center,white_50%,transparent_100%)] dark:[mask-image:radial-gradient(ellipse_at_center,white_50%,transparent_100%)]"
+        >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo.png" alt="Madre Pulse" className="h-11 w-auto rounded-md" />
         </Link>
@@ -173,7 +177,10 @@ export function AppNav() {
             <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5M3.75 17.25h16.5" />
           </svg>
         </button>
-        <Link href="/dashboard" className="inline-block rounded bg-transparent p-1 dark:bg-white">
+        <Link
+          href="/dashboard"
+          className="inline-block rounded bg-transparent p-1.5 dark:bg-white dark:[-webkit-mask-image:radial-gradient(ellipse_at_center,white_50%,transparent_100%)] dark:[mask-image:radial-gradient(ellipse_at_center,white_50%,transparent_100%)]"
+        >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo.png" alt="Madre Pulse" className="h-8 w-auto rounded" />
         </Link>
