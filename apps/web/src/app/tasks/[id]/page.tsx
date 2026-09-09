@@ -506,7 +506,7 @@ export default function TaskDetailPage() {
               <TaskChatPanel taskId={taskId} currentUserId={user?.id} role={role} />
             </div>
 
-            <div className="order-1 flex flex-col gap-6 lg:col-start-1">
+            <div className="order-1 flex flex-col gap-6 lg:col-start-1 lg:sticky lg:top-24 lg:h-[calc(100vh-8rem)] lg:overflow-y-auto lg:pr-1">
               <div className="rounded-card border border-border bg-surface p-6">
                 <div className="mb-2 flex items-start justify-between gap-3">
                   <h1 className="text-xl font-bold text-text">{task.title}</h1>
