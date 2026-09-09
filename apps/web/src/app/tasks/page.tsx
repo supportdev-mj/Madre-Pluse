@@ -154,24 +154,32 @@ export default function TasksPage() {
 
         {error && <p className="mb-4 text-sm text-red-500">{error}</p>}
 
-        {/* The board view already groups tasks into columns by status, so the tabs would be
-            redundant there — kept mounted (just invisible) so the toolbar below doesn't jump
-            up and shift under the cursor when Board is clicked. */}
+        {/* The board view already groups tasks into columns by status, so the tabs are redundant
+            there — instead of hiding the row (leaving blank space) or unmounting it (causing the
+            toolbar below to jump), every tab but All smoothly collapses to zero width and All
+            grows to fill the bar, then reverses just as smoothly switching back. */}
         <div
-          className={`mb-4 flex items-stretch gap-1 rounded-card border border-border bg-surface p-1.5 text-sm ${view === 'board' ? 'invisible' : ''}`}
+          className={`mb-4 flex items-stretch rounded-card border border-border bg-surface p-1.5 text-sm transition-[gap] duration-300 ease-out ${
+            view === 'board' ? 'gap-0' : 'gap-1'
+          }`}
         >
-          {TABS.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex-1 truncate rounded-card px-2 py-1.5 font-medium ${
-                activeTab === tab.id ? tab.activeClass : tab.idleClass
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
+          {TABS.map((tab) => {
+            const collapsed = view === 'board' && tab.id !== 'ALL';
+            const isHighlighted = view === 'board' ? tab.id === 'ALL' : activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                disabled={collapsed}
+                className={`truncate rounded-card py-1.5 font-medium transition-all duration-300 ease-out ${
+                  collapsed ? 'flex-[0] px-0 opacity-0' : 'flex-1 px-2 opacity-100'
+                } ${isHighlighted ? tab.activeClass : tab.idleClass}`}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
         </div>
 
         <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
