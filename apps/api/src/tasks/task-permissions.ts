@@ -20,9 +20,12 @@ export function assertCanModifyTask(
 }
 
 /** Gate for editing the task itself (title, due date, assignees, status, etc.) — unlike the
- * sub-resources above, this is an admin/manager action only. Being the creator or an assignee no
- * longer grants edit rights on its own; an assignee interacts with a task through its own
- * purpose-built actions instead (chat, Start/Stop, submit for verification). */
+ * sub-resources above, this is an admin/manager action only. Being the creator no longer grants
+ * edit rights on its own; a plain assignee (with no management role) interacts with a task
+ * through its own purpose-built actions instead (chat, Start/Stop, submit for verification, or
+ * requesting an edit — see EditRequestsService). A manager may edit a task they're themself
+ * assigned to, or one assigned to a direct report — never a peer manager's task, nor one assigned
+ * only to someone above them in the reporting chain. */
 export async function assertCanEditTask(
   prisma: PrismaService,
   cls: ClsService<AppClsStore>,
@@ -32,8 +35,9 @@ export async function assertCanEditTask(
   const role = cls.get('role');
   if (role === 'ADMIN') return;
   if (role === 'MANAGER') {
+    const userId = cls.get('userId');
     const reportIds = await getDirectReportUserIds(prisma, cls, orgId);
-    if (assigneeIds.some((id) => reportIds.includes(id))) return;
+    if (assigneeIds.some((id) => id === userId || reportIds.includes(id))) return;
   }
   throw new ForbiddenException('Only an admin, or the immediate manager of an assignee, can edit this task');
 }

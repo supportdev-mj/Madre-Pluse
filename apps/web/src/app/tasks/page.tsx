@@ -154,23 +154,25 @@ export default function TasksPage() {
 
         {error && <p className="mb-4 text-sm text-red-500">{error}</p>}
 
-        {/* The board view already groups tasks into columns by status, so the tabs would be redundant there. */}
-        {view !== 'board' && (
-          <div className="mb-4 flex items-stretch gap-1 rounded-card border border-border bg-surface p-1.5 text-sm">
-            {TABS.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex-1 truncate rounded-card px-2 py-1.5 font-medium ${
-                  activeTab === tab.id ? tab.activeClass : tab.idleClass
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-        )}
+        {/* The board view already groups tasks into columns by status, so the tabs would be
+            redundant there — kept mounted (just invisible) so the toolbar below doesn't jump
+            up and shift under the cursor when Board is clicked. */}
+        <div
+          className={`mb-4 flex items-stretch gap-1 rounded-card border border-border bg-surface p-1.5 text-sm ${view === 'board' ? 'invisible' : ''}`}
+        >
+          {TABS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex-1 truncate rounded-card px-2 py-1.5 font-medium ${
+                activeTab === tab.id ? tab.activeClass : tab.idleClass
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
 
         <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
           <label className="flex flex-col gap-1 text-sm text-text">

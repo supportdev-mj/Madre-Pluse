@@ -145,16 +145,30 @@ export default function MomPage() {
     }
   }
 
+  async function onDeleteUpload(momUploadId: string) {
+    if (!window.confirm('Delete this upload and its still-queued items? Already-accepted tasks are not affected.')) return;
+    setError(null);
+    setBusyId(momUploadId);
+    try {
+      await apiFetch(`/mom/uploads/${momUploadId}`, { method: 'DELETE' });
+      setCandidates((prev) => prev.filter((c) => c.momUploadId !== momUploadId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete this upload.');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   function onSaved(updated: MomTaskCandidateSummary) {
     setCandidates((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
   }
 
   function readyToAccept(c: MomTaskCandidateSummary): boolean {
-    return !!c.title && !!c.description && !!c.dueDate && !!c.suggestedAssigneeId;
+    return !!c.title && !!c.description && !!c.dueDate && c.suggestedAssigneeIds.length > 0;
   }
 
   function canReview(c: MomTaskCandidateSummary): boolean {
-    return isManagerOrAdmin || c.suggestedAssigneeId === user?.id;
+    return isManagerOrAdmin || (!!user?.id && c.suggestedAssigneeIds.includes(user.id));
   }
 
   function toggleUpload(id: string) {
@@ -241,12 +255,12 @@ export default function MomPage() {
               const isOpen = expandedUploads.has(g.momUploadId);
               return (
                 <div key={g.momUploadId} className="overflow-hidden rounded-card border border-border">
-                  <button
-                    type="button"
-                    onClick={() => toggleUpload(g.momUploadId)}
-                    className="flex w-full items-center justify-between gap-3 bg-surface-alt px-4 py-3 text-left"
-                  >
-                    <div className="flex min-w-0 items-center gap-2">
+                  <div className="flex w-full items-center justify-between gap-3 bg-surface-alt px-4 py-3 text-left">
+                    <button
+                      type="button"
+                      onClick={() => toggleUpload(g.momUploadId)}
+                      className="flex min-w-0 flex-1 items-center gap-2"
+                    >
                       <svg
                         xmlns="http://www.w3.org/2000/svg"
                         fill="none"
@@ -266,11 +280,23 @@ export default function MomPage() {
                       </svg>
                       <span className="truncate text-sm font-medium text-text">{g.momUploadFileName}</span>
                       <span className="shrink-0 text-xs text-muted">{formatDate(g.uploadedAt)}</span>
+                    </button>
+                    <div className="flex shrink-0 items-center gap-3">
+                      <span className="text-xs text-muted">
+                        {g.candidates.length} item{g.candidates.length === 1 ? '' : 's'}
+                      </span>
+                      {role === 'ADMIN' && (
+                        <button
+                          type="button"
+                          onClick={() => onDeleteUpload(g.momUploadId)}
+                          disabled={busyId === g.momUploadId}
+                          className="text-xs text-red-500 hover:underline disabled:opacity-50"
+                        >
+                          Delete
+                        </button>
+                      )}
                     </div>
-                    <span className="shrink-0 text-xs text-muted">
-                      {g.candidates.length} item{g.candidates.length === 1 ? '' : 's'}
-                    </span>
-                  </button>
+                  </div>
 
                   {isOpen && (
                     <div className="overflow-x-auto border-t border-border">
@@ -306,8 +332,10 @@ export default function MomPage() {
                               <td className="px-4 py-2 text-text">{c.priority}</td>
                               <td className="px-4 py-2 text-muted">{formatDate(c.dueDate)}</td>
                               <td className="px-4 py-2 text-muted">
-                                {c.suggestedAssigneeName ?? '—'}
-                                {c.suggestedAssigneeName && !c.suggestedAssigneeId && (
+                                {c.suggestedAssigneeIds.length > 0
+                                  ? c.suggestedAssigneeIds.map((id) => members.find((m) => m.userId === id)?.name ?? '?').join(', ')
+                                  : (c.suggestedAssigneeName ?? '—')}
+                                {c.suggestedAssigneeName && c.suggestedAssigneeIds.length === 0 && (
                                   <span className="ml-1 text-amber-600">(unmatched)</span>
                                 )}
                               </td>
@@ -367,6 +395,8 @@ export default function MomPage() {
           <EditCandidateModal
             candidate={editingCandidate}
             members={members}
+            role={role}
+            currentUserId={user?.id}
             onClose={() => setEditingCandidate(null)}
             onSaved={onSaved}
           />

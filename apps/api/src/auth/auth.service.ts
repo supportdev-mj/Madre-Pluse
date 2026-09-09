@@ -164,7 +164,7 @@ export class AuthService {
       this.prisma.user.findUniqueOrThrow({ where: { id: payload.sub } }),
       this.prisma.organization.findUniqueOrThrow({ where: { id: payload.orgId } }),
     ]);
-    return { user: this.toAuthUser(user), org: this.toAuthOrg(org), role: payload.role };
+    return { user: await this.toAuthUser(user, payload.orgId), org: this.toAuthOrg(org), role: payload.role };
   }
 
   /** currentRawRefreshToken (if provided) is left alone so the session making this change doesn't
@@ -192,7 +192,7 @@ export class AuthService {
     const created = await this.createRefreshToken(user.id);
 
     return {
-      user: this.toAuthUser(user),
+      user: await this.toAuthUser(user, org.id),
       org: this.toAuthOrg(org),
       role,
       accessToken,
@@ -231,7 +231,12 @@ export class AuthService {
     return createHash('sha256').update(token).digest('hex');
   }
 
-  private toAuthUser(user: UserRecord): AuthUser {
+  private async toAuthUser(user: UserRecord, orgId: string): Promise<AuthUser> {
+    const membership = await this.prisma.membership.findFirst({ where: { userId: user.id, orgId }, select: { id: true } });
+    const hasDirectReports = membership
+      ? (await this.prisma.membership.count({ where: { orgId, managerId: membership.id } })) > 0
+      : false;
+
     return {
       id: user.id,
       email: user.email,
@@ -239,6 +244,7 @@ export class AuthService {
       initials: user.initials,
       avatarColor: user.avatarColor,
       isSuperAdmin: user.isSuperAdmin,
+      hasDirectReports,
     };
   }
 

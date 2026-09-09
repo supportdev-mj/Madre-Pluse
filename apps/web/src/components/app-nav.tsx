@@ -103,8 +103,11 @@ export function AppNav() {
   const { role, user, logout } = useAuth();
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+  // Dashboard access is hierarchy-based, not just role-based (see DashboardService.getSummary) —
+  // a plain "user" who nonetheless has people reporting to them gets it too.
+  const canSeeDashboard = role === 'ADMIN' || role === 'MANAGER' || !!user?.hasDirectReports;
   const visibleLinks = [
-    ...links.filter((l) => !l.roles || (role && l.roles.includes(role))),
+    ...links.filter((l) => (l.href === '/dashboard' ? canSeeDashboard : !l.roles || (role && l.roles.includes(role)))),
     ...(user?.isSuperAdmin ? superAdminLinks : []),
   ];
 

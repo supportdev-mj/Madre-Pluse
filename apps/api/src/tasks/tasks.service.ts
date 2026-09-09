@@ -324,8 +324,8 @@ export class TasksService {
 
   /** The CURRENT user, as an assignee, submits this task for their manager's verification — the
    * only way into TO_VERIFY available to a plain assignee (an admin/manager can also do it via a
-   * direct PATCH, e.g. on someone else's behalf). Only an open task (To Do or In Progress) can be
-   * submitted — not one already awaiting a decision, failed, or done. */
+   * direct PATCH, e.g. on someone else's behalf). Requires the assignee to have personally started
+   * work on it at least once (so the task is In Progress) — a To Do task can't be submitted. */
   async submitForVerification(taskId: string): Promise<TaskSummary> {
     const orgId = requireOrgId(this.cls);
     const userId = this.currentUserId();
@@ -335,11 +335,18 @@ export class TasksService {
       include: { assignments: true },
     });
     if (!task) throw new NotFoundException('Task not found');
-    if (!task.assignments.some((a) => a.userId === userId)) {
+    const assignment = task.assignments.find((a) => a.userId === userId);
+    if (!assignment) {
       throw new ForbiddenException('Only an assignee can submit this task for verification');
     }
-    if (task.status !== 'TODO' && task.status !== 'IN_PROGRESS') {
-      throw new BadRequestException('Only an open task (To Do or In Progress) can be submitted for verification');
+    // A To Do task can't be sent for verification until the assignee has actually started work on
+    // it at least once — starting always advances the shared status past TODO, so this also rules
+    // out a task another assignee started that this assignee never personally touched.
+    if (assignment.status === 'NOT_STARTED') {
+      throw new BadRequestException('Start working on this task at least once before sending it for verification');
+    }
+    if (task.status !== 'IN_PROGRESS') {
+      throw new BadRequestException('Only a task that is In Progress can be submitted for verification');
     }
 
     await this.prisma.$transaction(async (tx) => {

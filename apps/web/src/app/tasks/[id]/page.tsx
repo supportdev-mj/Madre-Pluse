@@ -6,12 +6,14 @@ import { useEffect, useState, type FormEvent } from 'react';
 import {
   createBlockerReportSchema,
   createDependencySchema,
+  createEditRequestSchema,
   createReopenRequestSchema,
   createSubtaskSchema,
   type AssignmentStatusName,
   type BlockerReportSummary,
   type ClientSummary,
   type DependencySummary,
+  type EditRequestSummary,
   type MemberSummary,
   type ProjectSummary,
   type ReopenRequestSummary,
@@ -36,13 +38,12 @@ const STATUS_LABELS: Record<string, string> = {
   DONE: 'Completed',
 };
 
-// A "Completed" personal status only ever means the last timer session ended — it says nothing
-// about whether the assignee is idle right now, so on its own it's never shown; only an active
-// IN_PROGRESS session is distinguished from idle. Once the whole task is verified Done, everyone's
-// personal status simply reads "Completed" regardless of their own timer state.
+// Once the whole task is verified Done, everyone's status simply reads "Completed". Otherwise it's
+// "In Progress (started)" only while the assignee's own timer is actively running right now — idle
+// (never started, or started and since stopped) just reads "In Progress".
 function personalStatusLabel(s: AssignmentStatusName, taskStatus: string): string {
   if (taskStatus === 'DONE') return 'Completed';
-  return s === 'IN_PROGRESS' ? 'In Progress (started)' : 'Not started';
+  return s === 'IN_PROGRESS' ? 'In Progress (started)' : 'In Progress';
 }
 
 function personalStatusStyle(s: AssignmentStatusName, taskStatus: string): string {
@@ -112,8 +113,12 @@ export default function TaskDetailPage() {
   const [blockerReason, setBlockerReason] = useState('');
   const [reportingBlocker, setReportingBlocker] = useState(false);
 
+  const [editRequests, setEditRequests] = useState<EditRequestSummary[]>([]);
+  const [editRequestReason, setEditRequestReason] = useState('');
+  const [requestingEdit, setRequestingEdit] = useState(false);
+
   async function loadAll() {
-    const [t, s, d, all, entries, reopens, mems, blockers, projs, clis] = await Promise.all([
+    const [t, s, d, all, entries, reopens, mems, blockers, projs, clis, editReqs] = await Promise.all([
       apiFetch<TaskSummary>(`/tasks/${taskId}`),
       apiFetch<SubtaskSummary[]>(`/tasks/${taskId}/subtasks`),
       apiFetch<DependencySummary[]>(`/tasks/${taskId}/dependencies`),
@@ -124,6 +129,7 @@ export default function TaskDetailPage() {
       apiFetch<BlockerReportSummary[]>(`/tasks/${taskId}/blocker-reports`),
       apiFetch<ProjectSummary[]>('/projects'),
       apiFetch<ClientSummary[]>('/clients'),
+      apiFetch<EditRequestSummary[]>(`/tasks/${taskId}/edit-requests`),
     ]);
     setTask(t);
     setSubtasks(s);
@@ -135,6 +141,7 @@ export default function TaskDetailPage() {
     setBlockerReports(blockers);
     setProjects(projs);
     setClients(clis);
+    setEditRequests(editReqs);
   }
 
   useEffect(() => {
@@ -415,6 +422,42 @@ export default function TaskDetailPage() {
     }
   }
 
+  async function onRequestEdit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    const parsed = createEditRequestSchema.safeParse({ reason: editRequestReason });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message ?? 'Explain what needs to change.');
+      return;
+    }
+    setRequestingEdit(true);
+    try {
+      const request = await apiFetch<EditRequestSummary>(`/tasks/${taskId}/edit-requests`, {
+        method: 'POST',
+        body: JSON.stringify(parsed.data),
+      });
+      setEditRequests((prev) => [request, ...prev]);
+      setEditRequestReason('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to request an edit.');
+    } finally {
+      setRequestingEdit(false);
+    }
+  }
+
+  async function onResolveEditRequest(id: string) {
+    setError(null);
+    try {
+      const resolved = await apiFetch<EditRequestSummary>(`/tasks/${taskId}/edit-requests/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({}),
+      });
+      setEditRequests((prev) => prev.map((r) => (r.id === id ? resolved : r)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to resolve edit request.');
+    }
+  }
+
   async function onEditTask(input: UpdateTaskInput) {
     const updated = await apiFetch<TaskSummary>(`/tasks/${taskId}`, {
       method: 'PATCH',
@@ -516,14 +559,13 @@ export default function TaskDetailPage() {
               </div>
 
               <div className="rounded-card border border-border bg-surface p-6">
-                <h2 className="mb-4 text-base font-semibold text-text">My Status</h2>
+                <h2 className="mb-4 text-base font-semibold text-text">Status</h2>
                 {!myAssignment ? (
                   <p className="mb-4 text-sm text-muted">You&apos;re not assigned to this task.</p>
                 ) : (
                   <>
                     <div className="mb-4 flex items-center justify-between gap-4">
                       <div>
-                        <p className="text-xs text-muted">Status</p>
                         <p className={`text-sm font-medium ${personalStatusStyle(myAssignment.personalStatus, task.status)}`}>
                           {personalStatusLabel(myAssignment.personalStatus, task.status)}
                         </p>
@@ -628,7 +670,8 @@ export default function TaskDetailPage() {
                     )}
                   </div>
                 ) : (
-                  myAssignment && (
+                  myAssignment &&
+                  (myAssignment.personalStatus !== 'NOT_STARTED' ? (
                     <button
                       type="button"
                       onClick={onSendForVerification}
@@ -637,29 +680,9 @@ export default function TaskDetailPage() {
                     >
                       Send for verification
                     </button>
-                  )
-                )}
-              </div>
-
-              <div className="rounded-card border border-border bg-surface p-6">
-                <h2 className="mb-1 text-base font-semibold text-text">Time tracked</h2>
-                <p className="mb-4 text-sm text-muted">
-                  {timeEntries.length === 0 ? 'No time logged yet.' : `Sum of efforts: ${formatMinutes(totalMinutes)}`}
-                </p>
-                {timeEntries.length > 0 && (
-                  <ul className="flex max-h-64 flex-col gap-2 overflow-y-auto pr-1">
-                    {timeEntries.map((e) => (
-                      <li key={e.id} className="flex items-center gap-2 text-sm">
-                        <span className="w-16 shrink-0 font-medium text-text">{formatMinutes(e.minutes)}</span>
-                        <span className="w-28 shrink-0 truncate text-xs text-muted">{e.userName}</span>
-                        <span className="flex-1 truncate text-xs text-muted">
-                          {e.startedAt && e.endedAt
-                            ? `${formatDateTime(e.startedAt)} → ${formatDateTime(e.endedAt)}`
-                            : formatDueDate(e.date)}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
+                  ) : (
+                    <p className="text-sm text-muted">Start working on this task before sending it for verification.</p>
+                  ))
                 )}
               </div>
 
@@ -795,6 +818,65 @@ export default function TaskDetailPage() {
               </div>
 
               <div className="rounded-card border border-border bg-surface p-6">
+                <h2 className="mb-1 text-base font-semibold text-text">Edit requests</h2>
+                <p className="mb-4 text-sm text-muted">
+                  {editRequests.length === 0
+                    ? "Can't edit this task yourself? Request a change and explain what needs updating."
+                    : 'Requested changes on this task:'}
+                </p>
+                {editRequests.length > 0 && (
+                  <ul className="mb-4 flex flex-col gap-2">
+                    {editRequests.map((r) => (
+                      <li key={r.id} className="rounded-card border border-border p-3 text-sm">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-text">{r.requestedByName}</span>
+                          <span
+                            className={
+                              r.status === 'OPEN' ? 'text-xs font-medium text-amber-600' : 'text-xs font-medium text-green-600'
+                            }
+                          >
+                            {r.status}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-text">{r.reason}</p>
+                        {r.status === 'RESOLVED' && (
+                          <p className="mt-1 text-xs text-muted">
+                            Resolved by {r.resolvedByName}
+                            {r.resolutionNote ? `: ${r.resolutionNote}` : ''}
+                          </p>
+                        )}
+                        {r.status === 'OPEN' && canEditFields && (
+                          <div className="mt-2">
+                            <button
+                              type="button"
+                              onClick={() => onResolveEditRequest(r.id)}
+                              className="rounded-card bg-accent px-3 py-1 text-xs font-medium text-white"
+                            >
+                              Mark resolved
+                            </button>
+                          </div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {canCollaborate && !canEditFields && (
+                  <form onSubmit={onRequestEdit} className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                    <div className="flex-1">
+                      <FormField label="What needs to change?" value={editRequestReason} onChange={setEditRequestReason} />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={requestingEdit}
+                      className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                    >
+                      {requestingEdit ? 'Requesting…' : 'Request edit'}
+                    </button>
+                  </form>
+                )}
+              </div>
+
+              <div className="rounded-card border border-border bg-surface p-6">
                 <h2 className="mb-1 text-base font-semibold text-text">Subtasks</h2>
                 <p className="mb-4 text-sm text-muted">
                   {subtasks.length === 0 ? 'No subtasks yet.' : `${doneCount} of ${subtasks.length} complete`}
@@ -919,6 +1001,28 @@ export default function TaskDetailPage() {
                       Add
                     </button>
                   </form>
+                )}
+              </div>
+
+              <div className="rounded-card border border-border bg-surface p-6">
+                <h2 className="mb-1 text-base font-semibold text-text">Time tracked</h2>
+                <p className="mb-4 text-sm text-muted">
+                  {timeEntries.length === 0 ? 'No time logged yet.' : `Sum of efforts: ${formatMinutes(totalMinutes)}`}
+                </p>
+                {timeEntries.length > 0 && (
+                  <ul className="flex max-h-64 flex-col gap-2 overflow-y-auto pr-1">
+                    {timeEntries.map((e) => (
+                      <li key={e.id} className="flex items-center gap-2 text-sm">
+                        <span className="w-16 shrink-0 font-medium text-text">{formatMinutes(e.minutes)}</span>
+                        <span className="w-28 shrink-0 truncate text-xs text-muted">{e.userName}</span>
+                        <span className="flex-1 truncate text-xs text-muted">
+                          {e.startedAt && e.endedAt
+                            ? `${formatDateTime(e.startedAt)} → ${formatDateTime(e.endedAt)}`
+                            : formatDueDate(e.date)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
                 )}
               </div>
             </div>

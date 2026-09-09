@@ -30,7 +30,7 @@ interface CandidateRecord {
   title: string;
   description: string;
   suggestedAssigneeName: string | null;
-  suggestedAssigneeId: string | null;
+  suggestedAssigneeIds: string[];
   dueDate: Date | null;
   priority: string;
   context: string | null;
@@ -127,7 +127,7 @@ export class MomService {
             title: item.title,
             description: item.description || item.title,
             suggestedAssigneeName: item.responsibleName || null,
-            suggestedAssigneeId: item.assigneeId,
+            suggestedAssigneeIds: item.assigneeId ? [item.assigneeId] : [],
             dueDate: item.dueDate,
             priority: item.priority,
             context: item.context || null,
@@ -147,6 +147,17 @@ export class MomService {
     };
   }
 
+  /** Admin-only, for now: removes an uploaded MOM file and its still-queued candidates. Any
+   * candidate already accepted into a real task is unaffected — only the suggestion record and
+   * its link back to this upload go away, never the task itself. */
+  async removeUpload(id: string): Promise<void> {
+    const orgId = requireOrgId(this.cls);
+    const upload = await this.prisma.momUpload.findFirst({ where: { id, orgId } });
+    if (!upload) throw new NotFoundException('Upload not found');
+    await this.storage.delete(upload.storageKey);
+    await this.prisma.momUpload.delete({ where: { id } });
+  }
+
   async listCandidates(query: ListMomCandidatesQuery): Promise<MomTaskCandidateSummary[]> {
     const orgId = requireOrgId(this.cls);
     const isManagerOrAdmin = this.isManagerOrAdmin();
@@ -154,7 +165,7 @@ export class MomService {
       where: {
         orgId,
         status: query.status ?? 'PENDING',
-        ...(isManagerOrAdmin ? {} : { suggestedAssigneeId: this.currentUserId() }),
+        ...(isManagerOrAdmin ? {} : { suggestedAssigneeIds: { has: this.currentUserId() } }),
       },
       include: CANDIDATE_INCLUDE,
       orderBy: { createdAt: 'desc' },
@@ -171,7 +182,9 @@ export class MomService {
       throw new BadRequestException('This item has already been reviewed and can no longer be edited');
     }
 
-    if (input.assigneeId) await this.assertActiveMemberOfOrg(input.assigneeId, orgId);
+    if (input.assigneeIds) {
+      for (const userId of input.assigneeIds) await this.assertActiveMemberOfOrg(userId, orgId);
+    }
 
     const updated = await this.prisma.momTaskCandidate.update({
       where: { id },
@@ -179,7 +192,7 @@ export class MomService {
         title: input.title,
         description: input.description,
         dueDate: input.dueDate,
-        suggestedAssigneeId: input.assigneeId,
+        suggestedAssigneeIds: input.assigneeIds,
         priority: input.priority,
       },
       include: CANDIDATE_INCLUDE,
@@ -196,9 +209,9 @@ export class MomService {
     if (existing.status !== 'PENDING') {
       throw new BadRequestException('This item has already been reviewed');
     }
-    if (!existing.title || !existing.description || !existing.dueDate || !existing.suggestedAssigneeId) {
+    if (!existing.title || !existing.description || !existing.dueDate || existing.suggestedAssigneeIds.length === 0) {
       throw new BadRequestException(
-        'Complete the title, description, due date and assignee (via Edit) before accepting.',
+        'Complete the title, description, due date and assignee(s) (via Edit) before accepting.',
       );
     }
 
@@ -207,7 +220,7 @@ export class MomService {
       description: existing.description,
       dueDate: existing.dueDate,
       priority: existing.priority as TaskPriorityName,
-      assigneeIds: [existing.suggestedAssigneeId],
+      assigneeIds: existing.suggestedAssigneeIds,
     });
 
     const updated = await this.prisma.momTaskCandidate.update({
@@ -305,10 +318,10 @@ export class MomService {
     return role === 'ADMIN' || role === 'MANAGER';
   }
 
-  /** ADMIN/MANAGER may review any candidate; anyone else only the one the AI matched to them. */
-  private assertCanReview(candidate: { suggestedAssigneeId: string | null }): void {
+  /** ADMIN/MANAGER may review any candidate; anyone else only one they're among the suggested assignees for. */
+  private assertCanReview(candidate: { suggestedAssigneeIds: string[] }): void {
     if (this.isManagerOrAdmin()) return;
-    if (candidate.suggestedAssigneeId && candidate.suggestedAssigneeId === this.currentUserId()) return;
+    if (candidate.suggestedAssigneeIds.includes(this.currentUserId())) return;
     throw new ForbiddenException('You can only act on MOM items assigned to you');
   }
 
@@ -329,7 +342,7 @@ export class MomService {
       title: c.title,
       description: c.description,
       suggestedAssigneeName: c.suggestedAssigneeName,
-      suggestedAssigneeId: c.suggestedAssigneeId,
+      suggestedAssigneeIds: c.suggestedAssigneeIds,
       dueDate: c.dueDate ? c.dueDate.toISOString() : null,
       priority: c.priority as TaskPriorityName,
       context: c.context,

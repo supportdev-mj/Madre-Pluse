@@ -80,6 +80,8 @@ enum NotificationType {
   TASK_VERIFIED
   TASK_SENT_BACK
   TASK_VERIFICATION_REJECTED
+  EDIT_REQUESTED
+  EDIT_REQUEST_RESOLVED
 }
 
 enum ReopenRequestStatus {
@@ -89,6 +91,11 @@ enum ReopenRequestStatus {
 }
 
 enum BlockerReportStatus {
+  OPEN
+  RESOLVED
+}
+
+enum EditRequestStatus {
   OPEN
   RESOLVED
 }
@@ -158,11 +165,12 @@ model User {
   reopenRequestsHandled  ReopenRequest[]     @relation("ReopenReviewer")
   blockerReportsMade     BlockerReport[]     @relation("BlockerReporter")
   blockerReportsHandled  BlockerReport[]     @relation("BlockerResolver")
+  editRequestsMade       EditRequest[]       @relation("EditRequester")
+  editRequestsHandled    EditRequest[]       @relation("EditRequestResolver")
   googleIntegrations     GoogleIntegration[] @relation("GoogleIntegrationConnector")
   llmSettingsUpdates     LlmSettings[]
   orgAiSettingsUpdates   OrgAiSettings[]
   momUploads             MomUpload[]         @relation("MomUploader")
-  momCandidatesSuggested MomTaskCandidate[]  @relation("MomSuggestedAssignee")
   momCandidatesReviewed  MomTaskCandidate[]  @relation("MomReviewer")
 
   @@map("users")
@@ -281,6 +289,7 @@ model Task {
   notifications  Notification[]
   reopenRequests ReopenRequest[]
   blockerReports BlockerReport[]
+  editRequests   EditRequest[]
   momCandidate   MomTaskCandidate?
 
   @@index([orgId])
@@ -486,6 +495,28 @@ model BlockerReport {
   @@map("blocker_reports")
 }
 
+// A plain user (no edit rights on the task itself) asks their manager/admin to make a specific
+// change, explaining what in `reason`. There's no automatic consequence on resolve — the
+// admin/manager makes the edit themself (via the Edit action) and then marks the request handled.
+model EditRequest {
+  id             String            @id @default(cuid())
+  taskId         String
+  requestedById  String
+  reason         String
+  status         EditRequestStatus @default(OPEN)
+  resolvedById   String?
+  resolutionNote String?
+  createdAt      DateTime          @default(now())
+  resolvedAt     DateTime?
+
+  task        Task  @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  requestedBy User  @relation("EditRequester", fields: [requestedById], references: [id])
+  resolvedBy  User? @relation("EditRequestResolver", fields: [resolvedById], references: [id])
+
+  @@index([taskId])
+  @@map("edit_requests")
+}
+
 // Slice 19: one Google Workspace connection per org, used to pull Google Meet transcripts.
 // refreshTokenEncrypted is a real secret (unlike RefreshToken's hashed tokens — this one has to
 // be decrypted and reused to call Google's API later), so it's AES-256-GCM encrypted at rest via
@@ -575,7 +606,7 @@ model MomTaskCandidate {
   title                 String
   description           String
   suggestedAssigneeName String?
-  suggestedAssigneeId   String?
+  suggestedAssigneeIds  String[]           @default([])
   dueDate               DateTime?
   priority              TaskPriority       @default(MEDIUM)
   context               String?
@@ -586,11 +617,10 @@ model MomTaskCandidate {
   createdAt             DateTime           @default(now())
   updatedAt             DateTime           @updatedAt
 
-  org               Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  momUpload         MomUpload    @relation(fields: [momUploadId], references: [id], onDelete: Cascade)
-  suggestedAssignee User?        @relation("MomSuggestedAssignee", fields: [suggestedAssigneeId], references: [id], onDelete: SetNull)
-  createdTask       Task?        @relation(fields: [createdTaskId], references: [id], onDelete: SetNull)
-  reviewedBy        User?        @relation("MomReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  org         Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  momUpload   MomUpload    @relation(fields: [momUploadId], references: [id], onDelete: Cascade)
+  createdTask Task?        @relation(fields: [createdTaskId], references: [id], onDelete: SetNull)
+  reviewedBy  User?        @relation("MomReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
 
   @@index([orgId, status])
   @@index([momUploadId])

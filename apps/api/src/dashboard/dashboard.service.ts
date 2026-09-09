@@ -1,9 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
 import type { DashboardSummary, TaskPriorityName, TaskStatusName } from '@madre-pulse/shared';
 import type { AppClsStore } from '../common/tenant/cls-store.type';
 import { requireOrgId } from '../common/tenant/require-org-id';
-import { getTaskVisibleUserIds, taskVisibilityWhere } from '../common/tenant/task-visibility';
+import { getDirectReportUserIds, getTaskVisibleUserIds, taskVisibilityWhere } from '../common/tenant/task-visibility';
 import { PrismaService } from '../prisma/prisma.service';
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -19,6 +19,15 @@ export class DashboardService {
 
   async getSummary(): Promise<DashboardSummary> {
     const orgId = requireOrgId(this.cls);
+    // Available to admins and managers, and — since visibility is hierarchy-based, not role-based
+    // (see getTaskVisibleUserIds) — anyone else who actually has direct reports.
+    const role = this.cls.get('role');
+    if (role !== 'ADMIN' && role !== 'MANAGER') {
+      const reportIds = await getDirectReportUserIds(this.prisma, this.cls, orgId);
+      if (reportIds.length === 0) {
+        throw new ForbiddenException('The dashboard is only available to admins, managers, or anyone with direct reports');
+      }
+    }
     const now = new Date();
     const sevenDaysAgo = new Date(now.getTime() - SEVEN_DAYS_MS);
     const visibleUserIds = await getTaskVisibleUserIds(this.prisma, this.cls, orgId);

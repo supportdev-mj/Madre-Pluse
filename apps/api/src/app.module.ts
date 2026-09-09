@@ -23,6 +23,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { DueSoonModule } from './due-soon/due-soon.module';
 import { ReopenRequestsModule } from './reopen-requests/reopen-requests.module';
 import { BlockerReportsModule } from './blocker-reports/blocker-reports.module';
+import { EditRequestsModule } from './edit-requests/edit-requests.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { ReportsModule } from './reports/reports.module';
 import { MomModule } from './mom/mom.module';
@@ -61,6 +62,7 @@ import { MomModule } from './mom/mom.module';
     DueSoonModule,
     ReopenRequestsModule,
     BlockerReportsModule,
+    EditRequestsModule,
     DashboardModule,
     ReportsModule,
     MomModule,

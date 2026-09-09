@@ -2,7 +2,9 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
   Param,
   Patch,
   Post,
@@ -62,6 +64,13 @@ export class MomController {
   upload(@UploadedFile() file?: Express.Multer.File) {
     if (!file) throw new BadRequestException('No file provided');
     return this.momService.upload(file);
+  }
+
+  @Roles('ADMIN')
+  @Delete('uploads/:id')
+  @HttpCode(204)
+  removeUpload(@Param('id') id: string) {
+    return this.momService.removeUpload(id);
   }
 
   // No @Roles() here — ADMIN/MANAGER see every org candidate, and any USER may see and act on

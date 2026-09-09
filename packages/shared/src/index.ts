@@ -30,6 +30,10 @@ export interface AuthUser {
   initials: string;
   avatarColor: string;
   isSuperAdmin: boolean;
+  /** True if anyone's Membership.managerId points at this user's own membership in the current
+   * org — used to extend manager-like task visibility and dashboard access to a plain "user" role
+   * who nonetheless has people reporting to them in the org chart. */
+  hasDirectReports: boolean;
 }
 
 export interface AuthOrg {
@@ -387,6 +391,8 @@ export const NOTIFICATION_TYPES = [
   'TASK_VERIFIED',
   'TASK_SENT_BACK',
   'TASK_VERIFICATION_REJECTED',
+  'EDIT_REQUESTED',
+  'EDIT_REQUEST_RESOLVED',
 ] as const;
 export type NotificationTypeName = (typeof NOTIFICATION_TYPES)[number];
 
@@ -457,6 +463,38 @@ export interface BlockerReportSummary {
   status: BlockerReportStatusName;
   reportedById: string;
   reportedByName: string;
+  resolvedById: string | null;
+  resolvedByName: string | null;
+  resolutionNote: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+// --- Slice 20: Edit requests ---
+// A plain user (no edit rights on the task itself — see TasksService.assertCanEditTask) asks their
+// manager/admin to make a specific change, explaining what in `reason`. Resolving it has no
+// automatic effect on the task; the admin/manager makes the edit themself via the Edit action.
+
+export const EDIT_REQUEST_STATUSES = ['OPEN', 'RESOLVED'] as const;
+export type EditRequestStatusName = (typeof EDIT_REQUEST_STATUSES)[number];
+
+export const createEditRequestSchema = z.object({
+  reason: z.string().trim().min(1, 'Explain what needs to change').max(1000),
+});
+export type CreateEditRequestInput = z.infer<typeof createEditRequestSchema>;
+
+export const resolveEditRequestSchema = z.object({
+  resolutionNote: z.string().trim().max(1000).optional(),
+});
+export type ResolveEditRequestInput = z.infer<typeof resolveEditRequestSchema>;
+
+export interface EditRequestSummary {
+  id: string;
+  taskId: string;
+  reason: string;
+  status: EditRequestStatusName;
+  requestedById: string;
+  requestedByName: string;
   resolvedById: string | null;
   resolvedByName: string | null;
   resolutionNote: string | null;
@@ -615,7 +653,7 @@ export const updateMomCandidateSchema = z
     title: z.string().trim().min(1, 'Title is required').max(200).optional(),
     description: z.string().trim().min(1, 'Description is required').max(5000).optional(),
     dueDate: z.coerce.date().nullable().optional(),
-    assigneeId: z.string().cuid().nullable().optional(),
+    assigneeIds: z.array(z.string().cuid()).optional(),
     priority: z.enum(TASK_PRIORITIES).optional(),
   })
   .refine((data) => Object.keys(data).length > 0, { message: 'Provide at least one field to update' });
@@ -639,7 +677,7 @@ export interface MomTaskCandidateSummary {
   title: string;
   description: string;
   suggestedAssigneeName: string | null;
-  suggestedAssigneeId: string | null;
+  suggestedAssigneeIds: string[];
   dueDate: string | null;
   priority: TaskPriorityName;
   context: string | null;
