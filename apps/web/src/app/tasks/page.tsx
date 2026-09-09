@@ -25,26 +25,27 @@ const STATUS_LABELS: Record<TaskStatusName, string> = {
   IN_PROGRESS: 'In Progress',
   TO_VERIFY: 'To Verify',
   FAILED: 'Failed',
-  DONE: 'Done',
+  DONE: 'Completed',
 };
-
-// Done and Failed are only ever reachable by a manager deciding a verification (see the task
-// detail page), never by a direct status edit — so they're left out of the editable dropdown below.
-const EDITABLE_STATUSES = TASK_STATUSES.filter((s) => s !== 'DONE' && s !== 'FAILED');
 
 // The top-row slicer tabs. TO_VERIFY covers two viewpoints on the same status: "Under
 // Verification" is what I (as an assignee) sent in and am waiting on; "To Verify" is what's
 // waiting on ME to decide (as a manager/admin) — distinguished client-side via TaskSummary.canVerify.
 type TaskTab = 'ALL' | 'TODO' | 'IN_PROGRESS' | 'UNDER_VERIFICATION' | 'TO_VERIFY' | 'DONE' | 'FAILED';
 
-const TABS: { id: TaskTab; label: string }[] = [
-  { id: 'ALL', label: 'All' },
-  { id: 'TODO', label: 'To Do' },
-  { id: 'IN_PROGRESS', label: 'In Progress' },
-  { id: 'UNDER_VERIFICATION', label: 'Under Verification' },
-  { id: 'TO_VERIFY', label: 'To Verify' },
-  { id: 'DONE', label: 'Completed' },
-  { id: 'FAILED', label: 'Failed' },
+const TABS: { id: TaskTab; label: string; activeClass: string; idleClass: string }[] = [
+  { id: 'ALL', label: 'All', activeClass: 'bg-text text-white', idleClass: 'text-muted hover:bg-surface-alt hover:text-text' },
+  { id: 'TODO', label: 'To Do', activeClass: 'bg-slate-500 text-white', idleClass: 'text-slate-500 hover:bg-surface-alt' },
+  { id: 'IN_PROGRESS', label: 'In Progress', activeClass: 'bg-sky-500 text-white', idleClass: 'text-sky-600 hover:bg-surface-alt' },
+  {
+    id: 'UNDER_VERIFICATION',
+    label: 'Under Verification',
+    activeClass: 'bg-amber-500 text-white',
+    idleClass: 'text-amber-600 hover:bg-surface-alt',
+  },
+  { id: 'TO_VERIFY', label: 'To Verify', activeClass: 'bg-amber-600 text-white', idleClass: 'text-amber-700 hover:bg-surface-alt' },
+  { id: 'DONE', label: 'Completed', activeClass: 'bg-green-600 text-white', idleClass: 'text-green-600 hover:bg-surface-alt' },
+  { id: 'FAILED', label: 'Failed', activeClass: 'bg-red-500 text-white', idleClass: 'text-red-500 hover:bg-surface-alt' },
 ];
 
 function tabStatusParam(tab: TaskTab): TaskStatusName | undefined {
@@ -73,16 +74,19 @@ export default function TasksPage() {
   const [showAddModal, setShowAddModal] = useState(false);
 
   async function loadTasks() {
+    // The board view already groups tasks into columns by every status, so the tabs (and their
+    // filtering) don't apply there — only the assignee filter still does.
+    const effectiveTab = view === 'board' ? 'ALL' : activeTab;
     const params = new URLSearchParams();
-    const statusParam = tabStatusParam(activeTab);
+    const statusParam = tabStatusParam(effectiveTab);
     if (statusParam) params.set('status', statusParam);
     if (assigneeFilter) params.set('assigneeId', assigneeFilter);
     const qs = params.toString();
     const data = await apiFetch<TaskSummary[]>(`/tasks${qs ? `?${qs}` : ''}`);
     const filtered =
-      activeTab === 'UNDER_VERIFICATION'
+      effectiveTab === 'UNDER_VERIFICATION'
         ? data.filter((t) => t.assignees.some((a) => a.userId === user?.id))
-        : activeTab === 'TO_VERIFY'
+        : effectiveTab === 'TO_VERIFY'
           ? data.filter((t) => t.canVerify)
           : data;
     setTasks(filtered);
@@ -108,24 +112,11 @@ export default function TasksPage() {
       .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load tasks'))
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, activeTab, assigneeFilter]);
+  }, [status, activeTab, assigneeFilter, view]);
 
   async function onAddTask(input: CreateTaskInput) {
     const task = await apiFetch<TaskSummary>('/tasks', { method: 'POST', body: JSON.stringify(input) });
     setTasks((prev) => [task, ...prev]);
-  }
-
-  async function onStatusChange(task: TaskSummary, nextStatus: TaskStatusName) {
-    setError(null);
-    try {
-      const updated = await apiFetch<TaskSummary>(`/tasks/${task.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ status: nextStatus }),
-      });
-      setTasks((prev) => prev.map((t) => (t.id === task.id ? updated : t)));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update task.');
-    }
   }
 
   async function onDelete(id: string) {
@@ -140,11 +131,8 @@ export default function TasksPage() {
 
   if (status !== 'authenticated') return null;
 
-  const canDelete = role === 'ADMIN' || role === 'MANAGER';
-
-  function canEdit(task: TaskSummary): boolean {
-    return canDelete || task.assignees.some((a) => a.userId === user?.id) || task.createdById === user?.id;
-  }
+  // Only an admin can delete a task once it's created.
+  const canDelete = role === 'ADMIN';
 
   return (
     <div className="min-h-screen sm:pl-60">
@@ -166,14 +154,19 @@ export default function TasksPage() {
 
         {error && <p className="mb-4 text-sm text-red-500">{error}</p>}
 
-        <div className="mb-4 flex flex-wrap items-center gap-2 overflow-x-auto rounded-card border border-border bg-surface p-1.5 text-sm">
+        {/* The board view already groups tasks into columns by status, so the tabs would be
+            redundant there — kept mounted (just invisible) so the toolbar below doesn't jump
+            up and shift under the cursor when Board is clicked. */}
+        <div
+          className={`mb-4 flex items-stretch gap-1 rounded-card border border-border bg-surface p-1.5 text-sm ${view === 'board' ? 'invisible' : ''}`}
+        >
           {TABS.map((tab) => (
             <button
               key={tab.id}
               type="button"
               onClick={() => setActiveTab(tab.id)}
-              className={`shrink-0 rounded-card px-3 py-1.5 font-medium ${
-                activeTab === tab.id ? 'bg-accent text-white' : 'text-muted hover:bg-surface-alt hover:text-text'
+              className={`flex-1 truncate rounded-card px-2 py-1.5 font-medium ${
+                activeTab === tab.id ? tab.activeClass : tab.idleClass
               }`}
             >
               {tab.label}
@@ -182,19 +175,6 @@ export default function TasksPage() {
         </div>
 
         <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex overflow-hidden rounded-card border border-border text-sm">
-            {(['list', 'board', 'calendar'] as const).map((v) => (
-              <button
-                key={v}
-                type="button"
-                onClick={() => setView(v)}
-                className={`px-3 py-1.5 capitalize ${view === v ? 'bg-accent text-white' : 'bg-surface text-muted hover:text-text'}`}
-              >
-                {v}
-              </button>
-            ))}
-          </div>
-
           <label className="flex flex-col gap-1 text-sm text-text">
             Assignee
             <select
@@ -210,13 +190,26 @@ export default function TasksPage() {
               ))}
             </select>
           </label>
+
+          <div className="flex overflow-hidden rounded-card border border-border text-sm">
+            {(['list', 'board', 'calendar'] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setView(v)}
+                className={`px-3 py-1.5 capitalize ${view === v ? 'bg-accent text-white' : 'bg-surface text-muted hover:text-text'}`}
+              >
+                {v}
+              </button>
+            ))}
+          </div>
         </div>
 
         {loading ? (
           <p className="text-muted">Loading…</p>
         ) : view === 'board' ? (
           <div className="mb-8">
-            <TaskBoardView tasks={tasks} canEditTask={canEdit} onStatusChange={onStatusChange} />
+            <TaskBoardView tasks={tasks} />
           </div>
         ) : view === 'calendar' ? (
           <div className="mb-8">
@@ -247,23 +240,7 @@ export default function TasksPage() {
                         {t.title}
                       </Link>
                     </td>
-                    <td className="px-4 py-2 text-text">
-                      {canEdit(t) && t.status !== 'DONE' && t.status !== 'FAILED' ? (
-                        <select
-                          value={t.status}
-                          onChange={(e) => onStatusChange(t, e.target.value as TaskStatusName)}
-                          className="rounded border border-border bg-surface px-2 py-1 text-sm text-text"
-                        >
-                          {EDITABLE_STATUSES.map((s) => (
-                            <option key={s} value={s}>
-                              {STATUS_LABELS[s]}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        STATUS_LABELS[t.status]
-                      )}
-                    </td>
+                    <td className="px-4 py-2 text-text">{STATUS_LABELS[t.status]}</td>
                     <td className="px-4 py-2 text-text">{t.priority}</td>
                     <td className="px-4 py-2 text-muted">{formatDueDate(t.dueDate)}</td>
                     <td className="px-4 py-2 text-muted">
@@ -288,6 +265,8 @@ export default function TasksPage() {
         {showAddModal && (
           <AddTaskModal
             members={members}
+            role={role}
+            currentUserId={user?.id}
             projects={projects}
             clients={clients}
             onClose={() => setShowAddModal(false)}

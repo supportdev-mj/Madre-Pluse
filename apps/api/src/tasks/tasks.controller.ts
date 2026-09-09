@@ -55,6 +55,11 @@ export class TasksController {
     return this.tasksService.completeTracking(id);
   }
 
+  @Post(':id/submit-for-verification')
+  submitForVerification(@Param('id') id: string) {
+    return this.tasksService.submitForVerification(id);
+  }
+
   @UseGuards(RolesGuard)
   @Roles('ADMIN', 'MANAGER')
   @Patch(':id/verify')
@@ -63,7 +68,7 @@ export class TasksController {
   }
 
   @UseGuards(RolesGuard)
-  @Roles('ADMIN', 'MANAGER')
+  @Roles('ADMIN')
   @Delete(':id')
   @HttpCode(204)
   remove(@Param('id') id: string) {

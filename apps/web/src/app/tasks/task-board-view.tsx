@@ -1,6 +1,6 @@
 'use client';
 
-import { DndContext, PointerSensor, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
+import Link from 'next/link';
 import { TASK_STATUSES, type TaskStatusName, type TaskSummary } from '@madre-pulse/shared';
 
 const STATUS_LABELS: Record<TaskStatusName, string> = {
@@ -8,7 +8,7 @@ const STATUS_LABELS: Record<TaskStatusName, string> = {
   IN_PROGRESS: 'In Progress',
   TO_VERIFY: 'To Verify',
   FAILED: 'Failed',
-  DONE: 'Done',
+  DONE: 'Completed',
 };
 
 const PRIORITY_STYLES: Record<string, string> = {
@@ -20,88 +20,39 @@ const PRIORITY_STYLES: Record<string, string> = {
 
 interface TaskBoardViewProps {
   tasks: TaskSummary[];
-  canEditTask: (task: TaskSummary) => boolean;
-  onStatusChange: (task: TaskSummary, status: TaskStatusName) => void;
 }
 
-export function TaskBoardView({ tasks, canEditTask, onStatusChange }: TaskBoardViewProps) {
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
-
-  function handleDragEnd(event: DragEndEvent) {
-    const { active, over } = event;
-    if (!over) return;
-    const nextStatus = over.id as TaskStatusName;
-    // Done and Failed are only reachable via manager verification (see the task detail page), never a drag.
-    if (nextStatus === 'DONE' || nextStatus === 'FAILED') return;
-    const task = tasks.find((t) => t.id === active.id);
-    if (!task || task.status === nextStatus) return;
-    onStatusChange(task, nextStatus);
-  }
-
+export function TaskBoardView({ tasks }: TaskBoardViewProps) {
   return (
-    <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        {TASK_STATUSES.map((status) => (
-          <BoardColumn
-            key={status}
-            status={status}
-            tasks={tasks.filter((t) => t.status === status)}
-            canEditTask={canEditTask}
-          />
-        ))}
-      </div>
-    </DndContext>
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      {TASK_STATUSES.map((status) => (
+        <BoardColumn key={status} status={status} tasks={tasks.filter((t) => t.status === status)} />
+      ))}
+    </div>
   );
 }
 
-function BoardColumn({
-  status,
-  tasks,
-  canEditTask,
-}: {
-  status: TaskStatusName;
-  tasks: TaskSummary[];
-  canEditTask: (task: TaskSummary) => boolean;
-}) {
-  // Done and Failed are only reachable via manager verification (see the task detail page), so
-  // these columns never accept a drop.
-  const { setNodeRef, isOver } = useDroppable({ id: status, disabled: status === 'DONE' || status === 'FAILED' });
-
+function BoardColumn({ status, tasks }: { status: TaskStatusName; tasks: TaskSummary[] }) {
   return (
-    <div
-      ref={setNodeRef}
-      data-testid={`board-column-${status}`}
-      className={`min-h-[240px] rounded-card border border-border p-3 transition-colors ${isOver ? 'bg-surface-alt' : 'bg-surface'}`}
-    >
+    <div data-testid={`board-column-${status}`} className="min-h-[240px] rounded-card border border-border bg-surface p-3">
       <h3 className="mb-3 text-sm font-semibold text-text">
         {STATUS_LABELS[status]} <span className="font-normal text-muted">({tasks.length})</span>
       </h3>
       <div className="flex flex-col gap-2">
         {tasks.map((task) => (
-          <TaskCard key={task.id} task={task} draggable={canEditTask(task)} />
+          <TaskCard key={task.id} task={task} />
         ))}
       </div>
     </div>
   );
 }
 
-function TaskCard({ task, draggable }: { task: TaskSummary; draggable: boolean }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
-    id: task.id,
-    disabled: !draggable,
-  });
-
-  const style = transform
-    ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`, zIndex: isDragging ? 10 : undefined }
-    : undefined;
-
+function TaskCard({ task }: { task: TaskSummary }) {
   return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      {...(draggable ? { ...listeners, ...attributes } : {})}
+    <Link
+      href={`/tasks/${task.id}`}
       data-testid={`task-card-${task.id}`}
-      className={`rounded-card border border-border bg-surface-alt p-3 text-sm ${draggable ? 'cursor-grab touch-none active:cursor-grabbing' : 'opacity-70'}`}
+      className="block rounded-card border border-border bg-surface-alt p-3 text-sm hover:border-accent"
     >
       <div className="mb-1 font-medium text-text">{task.title}</div>
       <div className="flex items-center gap-2 text-xs">
@@ -126,6 +77,6 @@ function TaskCard({ task, draggable }: { task: TaskSummary; draggable: boolean }
           ))}
         </div>
       )}
-    </div>
+    </Link>
   );
 }

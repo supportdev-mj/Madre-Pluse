@@ -2,44 +2,55 @@
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
+  updateTaskSchema,
   TASK_PRIORITIES,
-  updateMomCandidateSchema,
+  type ClientSummary,
   type MemberSummary,
-  type MomTaskCandidateSummary,
+  type ProjectSummary,
   type RoleName,
   type TaskPriorityName,
+  type TaskSummary,
+  type UpdateTaskInput,
 } from '@madre-pulse/shared';
 import { FormField } from '../../components/form-field';
-import { apiFetch } from '../../lib/api-client';
 import { computeAssignableMembers } from '../../lib/assignable-members';
 
-interface EditCandidateModalProps {
-  candidate: MomTaskCandidateSummary;
+interface EditTaskModalProps {
+  task: TaskSummary;
   members: MemberSummary[];
   role: RoleName | null;
   currentUserId: string | undefined;
+  projects: ProjectSummary[];
+  clients: ClientSummary[];
   onClose: () => void;
-  onSaved: (updated: MomTaskCandidateSummary) => void;
+  onSubmit: (input: UpdateTaskInput) => Promise<void>;
 }
 
 function toDateInputValue(iso: string | null): string {
   return iso ? iso.slice(0, 10) : '';
 }
 
-export function EditCandidateModal({ candidate, members, role, currentUserId, onClose, onSaved }: EditCandidateModalProps) {
-  const [title, setTitle] = useState(candidate.title);
-  const [description, setDescription] = useState(candidate.description);
-  const [dueDate, setDueDate] = useState(toDateInputValue(candidate.dueDate));
-  const [assigneeIds, setAssigneeIds] = useState<string[]>(candidate.suggestedAssigneeIds);
+export function EditTaskModal({ task, members, role, currentUserId, projects, clients, onClose, onSubmit }: EditTaskModalProps) {
+  const [title, setTitle] = useState(task.title);
+  const [description, setDescription] = useState(task.description ?? '');
+  const [priority, setPriority] = useState<TaskPriorityName>(task.priority);
+  const [dueDate, setDueDate] = useState(toDateInputValue(task.dueDate));
+  const [projectId, setProjectId] = useState(task.projectId ?? '');
+  const [clientId, setClientId] = useState(task.clientId ?? '');
+  const [assigneeIds, setAssigneeIds] = useState<string[]>(task.assignees.map((a) => a.userId));
   const [assigneeMenuOpen, setAssigneeMenuOpen] = useState(false);
-  const [priority, setPriority] = useState<TaskPriorityName>(candidate.priority);
   const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const assigneeMenuRef = useRef<HTMLDivElement>(null);
 
-  // Same scoping as task creation: a superior picks from themself + direct reports (or anyone,
-  // for an admin) — always keeping the AI's suggested assignee(s) visible even outside that range.
-  const assignableMembers = computeAssignableMembers(members, role, currentUserId, candidate.suggestedAssigneeIds);
+  // Keeps every already-assigned person selectable even if they fall outside the current user's
+  // normal assignable range, so reassigning here never silently drops someone off the task.
+  const assignableMembers = computeAssignableMembers(
+    members,
+    role,
+    currentUserId,
+    task.assignees.map((a) => a.userId),
+  );
 
   useEffect(() => {
     function onClickOutside(e: MouseEvent) {
@@ -59,7 +70,7 @@ export function EditCandidateModal({ candidate, members, role, currentUserId, on
     assigneeIds.length === 0
       ? 'Select assignee(s)'
       : assigneeIds
-          .map((id) => assignableMembers.find((m) => m.userId === id)?.name)
+          .map((id) => assignableMembers.find((m) => m.userId === id)?.name ?? task.assignees.find((a) => a.userId === id)?.name)
           .filter(Boolean)
           .join(', ') || `${assigneeIds.length} selected`;
 
@@ -67,30 +78,28 @@ export function EditCandidateModal({ candidate, members, role, currentUserId, on
     e.preventDefault();
     setError(null);
 
-    const parsed = updateMomCandidateSchema.safeParse({
+    const parsed = updateTaskSchema.safeParse({
       title,
       description,
-      dueDate: dueDate || null,
-      assigneeIds,
       priority,
+      dueDate: dueDate || null,
+      projectId: projectId || null,
+      clientId: clientId || null,
+      assigneeIds,
     });
     if (!parsed.success) {
       setError(parsed.error.issues[0]?.message ?? 'Please check your input.');
       return;
     }
 
-    setSaving(true);
+    setSubmitting(true);
     try {
-      const updated = await apiFetch<MomTaskCandidateSummary>(`/mom/candidates/${candidate.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify(parsed.data),
-      });
-      onSaved(updated);
+      await onSubmit(parsed.data);
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save changes.');
     } finally {
-      setSaving(false);
+      setSubmitting(false);
     }
   }
 
@@ -98,7 +107,7 @@ export function EditCandidateModal({ candidate, members, role, currentUserId, on
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 px-4 py-8 sm:items-center">
       <div className="w-full max-w-lg rounded-card border border-border bg-surface p-6">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-base font-semibold text-text">Edit queued item</h2>
+          <h2 className="text-base font-semibold text-text">Edit task</h2>
           <button
             type="button"
             onClick={onClose}
@@ -110,12 +119,6 @@ export function EditCandidateModal({ candidate, members, role, currentUserId, on
             </svg>
           </button>
         </div>
-
-        {candidate.context && (
-          <p className="mb-4 rounded-card border border-border bg-surface-alt p-3 text-xs text-muted">
-            AI context: {candidate.context}
-          </p>
-        )}
 
         {error && <p className="mb-4 text-sm text-red-500">{error}</p>}
 
@@ -162,11 +165,6 @@ export function EditCandidateModal({ candidate, members, role, currentUserId, on
                 )}
               </div>
             )}
-            {candidate.suggestedAssigneeName && candidate.suggestedAssigneeIds.length === 0 && (
-              <span className="text-xs text-amber-600">
-                MoM mentioned &quot;{candidate.suggestedAssigneeName}&quot; but no matching team member was found — please pick one.
-              </span>
-            )}
           </div>
 
           <label className="flex flex-col gap-1 text-sm text-text">
@@ -184,6 +182,38 @@ export function EditCandidateModal({ candidate, members, role, currentUserId, on
             </select>
           </label>
 
+          <label className="flex flex-col gap-1 text-sm text-text">
+            Project (optional)
+            <select
+              value={projectId}
+              onChange={(e) => setProjectId(e.target.value)}
+              className="rounded-card border border-border bg-surface-alt px-3 py-2 text-sm text-text"
+            >
+              <option value="">No project</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex flex-col gap-1 text-sm text-text">
+            Client (optional)
+            <select
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+              className="rounded-card border border-border bg-surface-alt px-3 py-2 text-sm text-text"
+            >
+              <option value="">No client</option>
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
           <div className="mt-2 flex items-center justify-end gap-3">
             <button
               type="button"
@@ -194,10 +224,10 @@ export function EditCandidateModal({ candidate, members, role, currentUserId, on
             </button>
             <button
               type="submit"
-              disabled={saving}
+              disabled={submitting}
               className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
             >
-              {saving ? 'Saving…' : 'Save changes'}
+              {submitting ? 'Saving…' : 'Save changes'}
             </button>
           </div>
         </form>

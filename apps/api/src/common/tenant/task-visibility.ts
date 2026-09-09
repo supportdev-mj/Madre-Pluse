@@ -4,9 +4,11 @@ import type { PrismaService } from '../../prisma/prisma.service';
 import type { AppClsStore } from './cls-store.type';
 
 /**
- * Who may see a given task (as creator or assignee): ADMIN sees everyone (null = no restriction),
- * MANAGER sees themself + their direct reports (Membership.managerId), USER sees only themself.
- * Returns the set of user ids to check a task's createdById/assignments against.
+ * Who may see a given task (as creator or assignee): ADMIN sees everyone (null = no restriction).
+ * Everyone else sees themself plus their direct reports, if any (Membership.managerId) — this is
+ * hierarchy-based, not role-based: a "user" who nonetheless has people reporting to them in the
+ * org chart gets the same broadened visibility a "manager" does, and a "manager" with no reports
+ * yet sees only themself. Returns the set of user ids to check a task's createdById/assignments against.
  */
 export async function getTaskVisibleUserIds(
   prisma: PrismaService,
@@ -17,16 +19,9 @@ export async function getTaskVisibleUserIds(
   const userId = cls.get('userId');
   if (!userId) return [];
   if (role === 'ADMIN') return null;
-  if (role === 'USER') return [userId];
 
-  const ownMembership = await prisma.membership.findFirst({ where: { userId, orgId } });
-  if (!ownMembership) return [userId];
-
-  const reports = await prisma.membership.findMany({
-    where: { orgId, managerId: ownMembership.id },
-    select: { userId: true },
-  });
-  return [userId, ...reports.map((r) => r.userId)];
+  const reports = await getDirectReportUserIds(prisma, cls, orgId);
+  return [userId, ...reports];
 }
 
 /** null (ADMIN, unrestricted) → {}; otherwise → only tasks created by or assigned to one of userIds. */

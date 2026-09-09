@@ -6,22 +6,28 @@ import { useEffect, useState, type FormEvent } from 'react';
 import {
   createBlockerReportSchema,
   createDependencySchema,
+  createEditRequestSchema,
   createReopenRequestSchema,
   createSubtaskSchema,
   type AssignmentStatusName,
   type BlockerReportSummary,
+  type ClientSummary,
   type DependencySummary,
+  type EditRequestSummary,
   type MemberSummary,
+  type ProjectSummary,
   type ReopenRequestSummary,
   type SubtaskSummary,
   type TaskSummary,
   type TimeEntrySummary,
+  type UpdateTaskInput,
   type VerificationDecision,
 } from '@madre-pulse/shared';
 import { AppNav } from '../../../components/app-nav';
 import { FormField } from '../../../components/form-field';
 import { apiFetch } from '../../../lib/api-client';
 import { useRequireAuth } from '../../../lib/use-require-auth';
+import { EditTaskModal } from '../edit-task-modal';
 import { TaskChatPanel } from './task-chat-panel';
 
 const STATUS_LABELS: Record<string, string> = {
@@ -29,16 +35,15 @@ const STATUS_LABELS: Record<string, string> = {
   IN_PROGRESS: 'In Progress',
   TO_VERIFY: 'To Verify',
   FAILED: 'Failed',
-  DONE: 'Done',
+  DONE: 'Completed',
 };
 
-// A "Completed" personal status only ever means the last timer session ended — it says nothing
-// about whether the assignee is idle right now, so on its own it's never shown; only an active
-// IN_PROGRESS session is distinguished from idle. Once the whole task is verified Done, everyone's
-// personal status simply reads "Completed" regardless of their own timer state.
+// Once the whole task is verified Done, everyone's status simply reads "Completed". Otherwise it's
+// "In Progress (started)" only while the assignee's own timer is actively running right now — idle
+// (never started, or started and since stopped) just reads "In Progress".
 function personalStatusLabel(s: AssignmentStatusName, taskStatus: string): string {
   if (taskStatus === 'DONE') return 'Completed';
-  return s === 'IN_PROGRESS' ? 'In Progress (started)' : 'Not started';
+  return s === 'IN_PROGRESS' ? 'In Progress (started)' : 'In Progress';
 }
 
 function personalStatusStyle(s: AssignmentStatusName, taskStatus: string): string {
@@ -81,7 +86,9 @@ export default function TaskDetailPage() {
   const [dependencies, setDependencies] = useState<DependencySummary[]>([]);
   const [allTasks, setAllTasks] = useState<TaskSummary[]>([]);
   const [members, setMembers] = useState<MemberSummary[]>([]);
-  const [updatingAssignees, setUpdatingAssignees] = useState(false);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [clients, setClients] = useState<ClientSummary[]>([]);
+  const [showEditModal, setShowEditModal] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -106,8 +113,12 @@ export default function TaskDetailPage() {
   const [blockerReason, setBlockerReason] = useState('');
   const [reportingBlocker, setReportingBlocker] = useState(false);
 
+  const [editRequests, setEditRequests] = useState<EditRequestSummary[]>([]);
+  const [editRequestReason, setEditRequestReason] = useState('');
+  const [requestingEdit, setRequestingEdit] = useState(false);
+
   async function loadAll() {
-    const [t, s, d, all, entries, reopens, mems, blockers] = await Promise.all([
+    const [t, s, d, all, entries, reopens, mems, blockers, projs, clis, editReqs] = await Promise.all([
       apiFetch<TaskSummary>(`/tasks/${taskId}`),
       apiFetch<SubtaskSummary[]>(`/tasks/${taskId}/subtasks`),
       apiFetch<DependencySummary[]>(`/tasks/${taskId}/dependencies`),
@@ -116,6 +127,9 @@ export default function TaskDetailPage() {
       apiFetch<ReopenRequestSummary[]>(`/tasks/${taskId}/reopen-requests`),
       apiFetch<MemberSummary[]>('/members'),
       apiFetch<BlockerReportSummary[]>(`/tasks/${taskId}/blocker-reports`),
+      apiFetch<ProjectSummary[]>('/projects'),
+      apiFetch<ClientSummary[]>('/clients'),
+      apiFetch<EditRequestSummary[]>(`/tasks/${taskId}/edit-requests`),
     ]);
     setTask(t);
     setSubtasks(s);
@@ -125,6 +139,9 @@ export default function TaskDetailPage() {
     setReopenRequests(reopens);
     setMembers(mems);
     setBlockerReports(blockers);
+    setProjects(projs);
+    setClients(clis);
+    setEditRequests(editReqs);
   }
 
   useEffect(() => {
@@ -278,13 +295,28 @@ export default function TaskDetailPage() {
     setError(null);
     setTrackingBusy(true);
     try {
-      const updated = await apiFetch<TaskSummary>(`/tasks/${taskId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ status: 'TO_VERIFY' }),
-      });
+      const updated = await apiFetch<TaskSummary>(`/tasks/${taskId}/submit-for-verification`, { method: 'POST' });
       setTask(updated);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to send task for verification.');
+    } finally {
+      setTrackingBusy(false);
+    }
+  }
+
+  /** Admin/manager-only: a Failed task can't be reworked by the assignee on their own — someone
+   * with edit rights has to deliberately take it back to In Progress first. */
+  async function onTakeBackFailedTask() {
+    setError(null);
+    setTrackingBusy(true);
+    try {
+      const updated = await apiFetch<TaskSummary>(`/tasks/${taskId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'IN_PROGRESS' }),
+      });
+      setTask(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to reopen this task.');
     } finally {
       setTrackingBusy(false);
     }
@@ -390,31 +422,62 @@ export default function TaskDetailPage() {
     }
   }
 
-  async function onToggleAssignee(userId: string) {
-    if (!task) return;
+  async function onRequestEdit(e: FormEvent) {
+    e.preventDefault();
     setError(null);
-    const nextIds = task.assignees.some((a) => a.userId === userId)
-      ? task.assignees.filter((a) => a.userId !== userId).map((a) => a.userId)
-      : [...task.assignees.map((a) => a.userId), userId];
-    setUpdatingAssignees(true);
-    try {
-      const updated = await apiFetch<TaskSummary>(`/tasks/${taskId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ assigneeIds: nextIds }),
-      });
-      setTask(updated);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update assignees.');
-    } finally {
-      setUpdatingAssignees(false);
+    const parsed = createEditRequestSchema.safeParse({ reason: editRequestReason });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message ?? 'Explain what needs to change.');
+      return;
     }
+    setRequestingEdit(true);
+    try {
+      const request = await apiFetch<EditRequestSummary>(`/tasks/${taskId}/edit-requests`, {
+        method: 'POST',
+        body: JSON.stringify(parsed.data),
+      });
+      setEditRequests((prev) => [request, ...prev]);
+      setEditRequestReason('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to request an edit.');
+    } finally {
+      setRequestingEdit(false);
+    }
+  }
+
+  async function onResolveEditRequest(id: string) {
+    setError(null);
+    try {
+      const resolved = await apiFetch<EditRequestSummary>(`/tasks/${taskId}/edit-requests/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({}),
+      });
+      setEditRequests((prev) => prev.map((r) => (r.id === id ? resolved : r)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to resolve edit request.');
+    }
+  }
+
+  async function onEditTask(input: UpdateTaskInput) {
+    const updated = await apiFetch<TaskSummary>(`/tasks/${taskId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    });
+    setTask(updated);
   }
 
   if (status !== 'authenticated') return null;
 
-  const canEdit = task
+  // Subtasks, dependencies, blocker reports, and reopen requests are collaborative — the creator
+  // or an assignee participates the same as an admin/manager.
+  const canCollaborate = task
     ? role === 'ADMIN' || role === 'MANAGER' || task.assignees.some((a) => a.userId === user?.id) || task.createdById === user?.id
     : false;
+  // Editing the task's own fields (reassigning, taking a Failed task back to rework) is an
+  // admin/manager action only — the backend enforces the precise "manager of an assignee" check;
+  // this just decides whether to show the control, so a manager of an unrelated task sees it
+  // hidden here but would also be rejected server-side if they somehow tried anyway.
+  const canEditFields = role === 'ADMIN' || role === 'MANAGER';
 
   const doneCount = subtasks.filter((s) => s.done).length;
   const dependencyOptions = allTasks.filter(
@@ -445,7 +508,18 @@ export default function TaskDetailPage() {
 
             <div className="order-2 flex flex-col gap-6 lg:col-start-2">
               <div className="rounded-card border border-border bg-surface p-6">
-                <h1 className="mb-2 text-xl font-bold text-text">{task.title}</h1>
+                <div className="mb-2 flex items-start justify-between gap-3">
+                  <h1 className="text-xl font-bold text-text">{task.title}</h1>
+                  {canEditFields && (
+                    <button
+                      type="button"
+                      onClick={() => setShowEditModal(true)}
+                      className="shrink-0 rounded-card border border-border px-3 py-1.5 text-xs font-medium text-text hover:bg-surface-alt"
+                    >
+                      Edit
+                    </button>
+                  )}
+                </div>
                 {task.description && <p className="mb-3 text-sm text-muted">{task.description}</p>}
                 <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-muted">
                   <span>
@@ -464,23 +538,7 @@ export default function TaskDetailPage() {
 
                 <div className="mt-4">
                   <p className="mb-1.5 text-sm text-muted">Assignees</p>
-                  {canEdit ? (
-                    <div className="flex flex-col gap-1.5 rounded-card border border-border bg-surface-alt px-3 py-2">
-                      {members
-                        .filter((m) => m.status === 'ACTIVE')
-                        .map((m) => (
-                          <label key={m.userId} className="flex items-center gap-2 text-sm text-text">
-                            <input
-                              type="checkbox"
-                              checked={task.assignees.some((a) => a.userId === m.userId)}
-                              disabled={updatingAssignees}
-                              onChange={() => onToggleAssignee(m.userId)}
-                            />
-                            {m.name}
-                          </label>
-                        ))}
-                    </div>
-                  ) : task.assignees.length > 0 ? (
+                  {task.assignees.length > 0 ? (
                     <div className="flex flex-wrap gap-2">
                       {task.assignees.map((a) => (
                         <span key={a.userId} className="flex items-center gap-1.5 rounded-full bg-surface-alt py-1 pl-1 pr-2.5 text-xs text-text">
@@ -501,14 +559,13 @@ export default function TaskDetailPage() {
               </div>
 
               <div className="rounded-card border border-border bg-surface p-6">
-                <h2 className="mb-4 text-base font-semibold text-text">My Status</h2>
+                <h2 className="mb-4 text-base font-semibold text-text">Status</h2>
                 {!myAssignment ? (
                   <p className="mb-4 text-sm text-muted">You&apos;re not assigned to this task.</p>
                 ) : (
                   <>
                     <div className="mb-4 flex items-center justify-between gap-4">
                       <div>
-                        <p className="text-xs text-muted">Status</p>
                         <p className={`text-sm font-medium ${personalStatusStyle(myAssignment.personalStatus, task.status)}`}>
                           {personalStatusLabel(myAssignment.personalStatus, task.status)}
                         </p>
@@ -524,7 +581,7 @@ export default function TaskDetailPage() {
                           <p className="text-sm font-medium text-accent">{task.verifiedByName}</p>
                         </div>
                       ) : (
-                        task.status !== 'TO_VERIFY' && task.status !== 'DONE' && (
+                        task.status !== 'TO_VERIFY' && task.status !== 'DONE' && task.status !== 'FAILED' && (
                           <button
                             type="button"
                             onClick={myAssignment.personalStatus === 'IN_PROGRESS' ? onStopTracking : onStartTracking}
@@ -596,46 +653,36 @@ export default function TaskDetailPage() {
                       Sent for verification — awaiting your manager&apos;s approval.
                     </p>
                   )
-                ) : (
-                  <>
-                    {task.status === 'FAILED' && (
-                      <p className="mb-3 text-sm font-medium text-red-500">
-                        ✗ Verification failed. Rework this task and send it in again when ready.
-                      </p>
-                    )}
-                    {canEdit && (
+                ) : task.status === 'FAILED' ? (
+                  <div className="flex flex-col gap-2">
+                    <p className="text-sm font-medium text-red-500">
+                      ✗ Verification failed. {canEditFields ? 'Take it back to let the assignee rework it.' : 'Ask your manager or an admin to reopen it before resuming work.'}
+                    </p>
+                    {canEditFields && (
                       <button
                         type="button"
-                        onClick={onSendForVerification}
+                        onClick={onTakeBackFailedTask}
                         disabled={trackingBusy}
-                        className="w-full rounded-card border border-green-600 px-4 py-2 text-sm font-medium text-green-600 hover:bg-green-50 disabled:opacity-50"
+                        className="w-full rounded-card border border-border px-4 py-2 text-sm font-medium text-text hover:bg-surface-alt disabled:opacity-50"
                       >
-                        Send for verification
+                        Take back to rework
                       </button>
                     )}
-                  </>
-                )}
-              </div>
-
-              <div className="rounded-card border border-border bg-surface p-6">
-                <h2 className="mb-1 text-base font-semibold text-text">Time tracked</h2>
-                <p className="mb-4 text-sm text-muted">
-                  {timeEntries.length === 0 ? 'No time logged yet.' : `Sum of efforts: ${formatMinutes(totalMinutes)}`}
-                </p>
-                {timeEntries.length > 0 && (
-                  <ul className="flex max-h-64 flex-col gap-2 overflow-y-auto pr-1">
-                    {timeEntries.map((e) => (
-                      <li key={e.id} className="flex items-center gap-2 text-sm">
-                        <span className="w-16 shrink-0 font-medium text-text">{formatMinutes(e.minutes)}</span>
-                        <span className="w-28 shrink-0 truncate text-xs text-muted">{e.userName}</span>
-                        <span className="flex-1 truncate text-xs text-muted">
-                          {e.startedAt && e.endedAt
-                            ? `${formatDateTime(e.startedAt)} → ${formatDateTime(e.endedAt)}`
-                            : formatDueDate(e.date)}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
+                  </div>
+                ) : (
+                  myAssignment &&
+                  (myAssignment.personalStatus !== 'NOT_STARTED' ? (
+                    <button
+                      type="button"
+                      onClick={onSendForVerification}
+                      disabled={trackingBusy}
+                      className="w-full rounded-card border border-green-600 px-4 py-2 text-sm font-medium text-green-600 hover:bg-green-50 disabled:opacity-50"
+                    >
+                      Send for verification
+                    </button>
+                  ) : (
+                    <p className="text-sm text-muted">Start working on this task before sending it for verification.</p>
+                  ))
                 )}
               </div>
 
@@ -694,7 +741,7 @@ export default function TaskDetailPage() {
                       ))}
                     </ul>
                   )}
-                  {task.status === 'DONE' && canEdit && !hasPendingReopenRequest && (
+                  {task.status === 'DONE' && canCollaborate && !hasPendingReopenRequest && (
                     <form onSubmit={onRequestReopen} className="flex flex-col gap-2 sm:flex-row sm:items-end">
                       <div className="flex-1">
                         <FormField label="Reason to reopen" value={reopenReason} onChange={setReopenReason} />
@@ -754,7 +801,7 @@ export default function TaskDetailPage() {
                     ))}
                   </ul>
                 )}
-                {canEdit && (
+                {canCollaborate && (
                   <form onSubmit={onReportBlocker} className="flex flex-col gap-2 sm:flex-row sm:items-end">
                     <div className="flex-1">
                       <FormField label="What's blocking this?" value={blockerReason} onChange={setBlockerReason} />
@@ -765,6 +812,65 @@ export default function TaskDetailPage() {
                       className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                     >
                       {reportingBlocker ? 'Reporting…' : 'Report blocker'}
+                    </button>
+                  </form>
+                )}
+              </div>
+
+              <div className="rounded-card border border-border bg-surface p-6">
+                <h2 className="mb-1 text-base font-semibold text-text">Edit requests</h2>
+                <p className="mb-4 text-sm text-muted">
+                  {editRequests.length === 0
+                    ? "Can't edit this task yourself? Request a change and explain what needs updating."
+                    : 'Requested changes on this task:'}
+                </p>
+                {editRequests.length > 0 && (
+                  <ul className="mb-4 flex flex-col gap-2">
+                    {editRequests.map((r) => (
+                      <li key={r.id} className="rounded-card border border-border p-3 text-sm">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-text">{r.requestedByName}</span>
+                          <span
+                            className={
+                              r.status === 'OPEN' ? 'text-xs font-medium text-amber-600' : 'text-xs font-medium text-green-600'
+                            }
+                          >
+                            {r.status}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-text">{r.reason}</p>
+                        {r.status === 'RESOLVED' && (
+                          <p className="mt-1 text-xs text-muted">
+                            Resolved by {r.resolvedByName}
+                            {r.resolutionNote ? `: ${r.resolutionNote}` : ''}
+                          </p>
+                        )}
+                        {r.status === 'OPEN' && canEditFields && (
+                          <div className="mt-2">
+                            <button
+                              type="button"
+                              onClick={() => onResolveEditRequest(r.id)}
+                              className="rounded-card bg-accent px-3 py-1 text-xs font-medium text-white"
+                            >
+                              Mark resolved
+                            </button>
+                          </div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {canCollaborate && !canEditFields && (
+                  <form onSubmit={onRequestEdit} className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                    <div className="flex-1">
+                      <FormField label="What needs to change?" value={editRequestReason} onChange={setEditRequestReason} />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={requestingEdit}
+                      className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                    >
+                      {requestingEdit ? 'Requesting…' : 'Request edit'}
                     </button>
                   </form>
                 )}
@@ -782,11 +888,11 @@ export default function TaskDetailPage() {
                         type="checkbox"
                         checked={s.done}
                         onChange={() => onToggleSubtask(s)}
-                        disabled={!canEdit}
+                        disabled={!canCollaborate}
                         className="h-4 w-4"
                       />
                       <span className={`flex-1 text-text ${s.done ? 'text-muted line-through' : ''}`}>{s.title}</span>
-                      {canEdit ? (
+                      {canCollaborate ? (
                         <select
                           value={s.assignee?.userId ?? ''}
                           onChange={(e) => onReassignSubtask(s, e.target.value)}
@@ -810,7 +916,7 @@ export default function TaskDetailPage() {
                       ) : (
                         <span className="text-xs text-faint">Unassigned</span>
                       )}
-                      {canEdit && (
+                      {canCollaborate && (
                         <button type="button" onClick={() => onDeleteSubtask(s.id)} className="text-xs text-red-500">
                           Remove
                         </button>
@@ -818,7 +924,7 @@ export default function TaskDetailPage() {
                     </li>
                   ))}
                 </ul>
-                {canEdit && (
+                {canCollaborate && (
                   <form onSubmit={onAddSubtask} className="flex flex-col gap-2 sm:flex-row sm:items-end">
                     <div className="flex-1">
                       <FormField label="New subtask" value={newSubtask} onChange={setNewSubtask} />
@@ -862,7 +968,7 @@ export default function TaskDetailPage() {
                         {d.dependsOnTitle}
                       </Link>
                       <span className="text-xs text-muted">{STATUS_LABELS[d.dependsOnStatus] ?? d.dependsOnStatus}</span>
-                      {canEdit && (
+                      {canCollaborate && (
                         <button type="button" onClick={() => onRemoveDependency(d.id)} className="text-xs text-red-500">
                           Remove
                         </button>
@@ -870,7 +976,7 @@ export default function TaskDetailPage() {
                     </li>
                   ))}
                 </ul>
-                {canEdit && dependencyOptions.length > 0 && (
+                {canCollaborate && dependencyOptions.length > 0 && (
                   <form onSubmit={onAddDependency} className="flex flex-col gap-2 sm:flex-row sm:items-end">
                     <label className="flex flex-1 flex-col gap-1 text-sm text-text">
                       Add a blocker
@@ -897,8 +1003,43 @@ export default function TaskDetailPage() {
                   </form>
                 )}
               </div>
+
+              <div className="rounded-card border border-border bg-surface p-6">
+                <h2 className="mb-1 text-base font-semibold text-text">Time tracked</h2>
+                <p className="mb-4 text-sm text-muted">
+                  {timeEntries.length === 0 ? 'No time logged yet.' : `Sum of efforts: ${formatMinutes(totalMinutes)}`}
+                </p>
+                {timeEntries.length > 0 && (
+                  <ul className="flex max-h-64 flex-col gap-2 overflow-y-auto pr-1">
+                    {timeEntries.map((e) => (
+                      <li key={e.id} className="flex items-center gap-2 text-sm">
+                        <span className="w-16 shrink-0 font-medium text-text">{formatMinutes(e.minutes)}</span>
+                        <span className="w-28 shrink-0 truncate text-xs text-muted">{e.userName}</span>
+                        <span className="flex-1 truncate text-xs text-muted">
+                          {e.startedAt && e.endedAt
+                            ? `${formatDateTime(e.startedAt)} → ${formatDateTime(e.endedAt)}`
+                            : formatDueDate(e.date)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
           </div>
+        )}
+
+        {showEditModal && task && (
+          <EditTaskModal
+            task={task}
+            members={members}
+            role={role}
+            currentUserId={user?.id}
+            projects={projects}
+            clients={clients}
+            onClose={() => setShowEditModal(false)}
+            onSubmit={onEditTask}
+          />
         )}
       </main>
     </div>
