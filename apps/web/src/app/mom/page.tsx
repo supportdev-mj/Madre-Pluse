@@ -28,6 +28,7 @@ function formatDate(iso: string | null): string {
 interface UploadGroup {
   momUploadId: string;
   momUploadFileName: string;
+  momUploadSource: MomTaskCandidateSummary['momUploadSource'];
   uploadedAt: string;
   candidates: MomTaskCandidateSummary[];
 }
@@ -37,7 +38,13 @@ function groupByUpload(candidates: MomTaskCandidateSummary[]): UploadGroup[] {
   for (const c of candidates) {
     let group = groups.get(c.momUploadId);
     if (!group) {
-      group = { momUploadId: c.momUploadId, momUploadFileName: c.momUploadFileName, uploadedAt: c.createdAt, candidates: [] };
+      group = {
+        momUploadId: c.momUploadId,
+        momUploadFileName: c.momUploadFileName,
+        momUploadSource: c.momUploadSource,
+        uploadedAt: c.createdAt,
+        candidates: [],
+      };
       groups.set(c.momUploadId, group);
     }
     if (c.createdAt < group.uploadedAt) group.uploadedAt = c.createdAt;
@@ -177,8 +184,8 @@ export default function MomPage() {
         <h1 className="mb-1 text-xl font-bold text-text">MOM</h1>
         <p className="mb-6 text-sm text-muted">
           {isManagerOrAdmin
-            ? "Upload meeting-minutes PDFs and review the AI-extracted action items before they become real tasks."
-            : 'Action items an uploaded meeting-minutes PDF matched to you — accept, edit, or reject them.'}
+            ? 'Upload meeting-minutes PDFs, or connect Google Workspace in Settings to sync Meet transcripts automatically, and review the AI-extracted action items before they become real tasks.'
+            : 'Action items an uploaded PDF or synced Google Meet transcript matched to you — accept, edit, or reject them.'}
         </p>
 
         {error && <p className="mb-4 text-sm text-red-500">{error}</p>}
@@ -257,13 +264,23 @@ export default function MomPage() {
                       >
                         <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
                       </svg>
-                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor" className="h-4 w-4 shrink-0 text-muted">
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-19.5 0v6a2.25 2.25 0 002.25 2.25h15a2.25 2.25 0 002.25-2.25v-6m-19.5 0h19.5M4.5 9.75V6a2.25 2.25 0 012.25-2.25h6.621a1.5 1.5 0 011.06.44l1.94 1.94a1.5 1.5 0 001.06.44H19.5A2.25 2.25 0 0121.75 9v.75"
-                        />
-                      </svg>
+                      {g.momUploadSource === 'GOOGLE_MEET' ? (
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor" className="h-4 w-4 shrink-0 text-muted">
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z"
+                          />
+                        </svg>
+                      ) : (
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor" className="h-4 w-4 shrink-0 text-muted">
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-19.5 0v6a2.25 2.25 0 002.25 2.25h15a2.25 2.25 0 002.25-2.25v-6m-19.5 0h19.5M4.5 9.75V6a2.25 2.25 0 012.25-2.25h6.621a1.5 1.5 0 011.06.44l1.94 1.94a1.5 1.5 0 001.06.44H19.5A2.25 2.25 0 0121.75 9v.75"
+                          />
+                        </svg>
+                      )}
                       <span className="truncate text-sm font-medium text-text">{g.momUploadFileName}</span>
                       <span className="shrink-0 text-xs text-muted">{formatDate(g.uploadedAt)}</span>
                     </div>

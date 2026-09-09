@@ -4,6 +4,8 @@ import { useEffect, useState, type FormEvent } from 'react';
 import {
   updateMomAiSettingsSchema,
   updateOrganizationSchema,
+  type GoogleIntegrationStatus,
+  type GoogleMeetSyncResult,
   type MomAiSettingsStatus,
   type OrganizationSummary,
 } from '@madre-pulse/shared';
@@ -38,6 +40,13 @@ export default function SettingsPage() {
   const [savingMomAi, setSavingMomAi] = useState(false);
   const [momAiSaved, setMomAiSaved] = useState(false);
 
+  const [google, setGoogle] = useState<GoogleIntegrationStatus | null>(null);
+  const [googleLoading, setGoogleLoading] = useState(true);
+  const [googleNotice, setGoogleNotice] = useState<string | null>(null);
+  const [connecting, setConnecting] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+
   const canView = role === 'ADMIN';
 
   function loadMomAiStatus() {
@@ -45,6 +54,13 @@ export default function SettingsPage() {
       .then(setMomAi)
       .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load AI provider status'))
       .finally(() => setMomAiLoading(false));
+  }
+
+  function loadGoogleStatus() {
+    return apiFetch<GoogleIntegrationStatus>('/integrations/google/status')
+      .then(setGoogle)
+      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load Google integration status'))
+      .finally(() => setGoogleLoading(false));
   }
 
   useEffect(() => {
@@ -57,8 +73,65 @@ export default function SettingsPage() {
       .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load organization'))
       .finally(() => setLoading(false));
     loadMomAiStatus();
+    loadGoogleStatus();
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('google') === 'connected') {
+      setGoogleNotice('Google Workspace connected.');
+    } else if (params.get('google') === 'error') {
+      setGoogleNotice('Failed to connect Google Workspace — please try again.');
+    }
+    if (params.has('google')) {
+      window.history.replaceState(null, '', window.location.pathname);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, canView]);
+
+  async function onConnectGoogle() {
+    setError(null);
+    setConnecting(true);
+    try {
+      const { url } = await apiFetch<{ url: string }>('/integrations/google/connect-url');
+      window.location.href = url;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start Google connection.');
+      setConnecting(false);
+    }
+  }
+
+  async function onDisconnectGoogle() {
+    if (!window.confirm('Disconnect Google Workspace? Meeting transcript syncing will stop.')) return;
+    setError(null);
+    setDisconnecting(true);
+    try {
+      await apiFetch('/integrations/google', { method: 'DELETE' });
+      await loadGoogleStatus();
+      setGoogleNotice(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to disconnect Google Workspace.');
+    } finally {
+      setDisconnecting(false);
+    }
+  }
+
+  async function onSyncGoogle() {
+    setError(null);
+    setGoogleNotice(null);
+    setSyncing(true);
+    try {
+      const result = await apiFetch<GoogleMeetSyncResult>('/integrations/google/sync', { method: 'POST' });
+      setGoogleNotice(
+        result.meetingsSynced === 0
+          ? `Checked ${result.meetingsChecked} meeting(s) — nothing new to sync.`
+          : `Synced ${result.meetingsSynced} meeting(s) — ${result.itemsNew} new item(s) added to the MOM queue` +
+              (result.itemsSkipped > 0 ? `, ${result.itemsSkipped} skipped as duplicates.` : '.'),
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to sync Google Meet transcripts.');
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   async function onSaveMomAi(e: FormEvent) {
     e.preventDefault();
@@ -203,7 +276,8 @@ export default function SettingsPage() {
               <h2 className="mb-1 text-base font-semibold text-text">AI provider (MOM extraction)</h2>
               <p className="mb-4 text-sm text-muted">
                 Add your organization&apos;s Anthropic API key so the MOM page can read uploaded meeting-minutes
-                PDFs and extract action items into a review queue.
+                PDFs — and, once connected below, synced Google Meet transcripts — extracting action items into a
+                review queue.
               </p>
               {momAiLoading ? (
                 <p className="text-sm text-muted">Loading…</p>
@@ -240,6 +314,60 @@ export default function SettingsPage() {
                     </div>
                   </form>
                 </div>
+              )}
+            </div>
+
+            <div className="rounded-card border border-border bg-surface p-6">
+              <h2 className="mb-1 text-base font-semibold text-text">Meeting integrations</h2>
+              <p className="mb-4 text-sm text-muted">
+                Connect Google Workspace so ended, transcribed Google Meet calls sync automatically into the MOM
+                review queue — the same AI key and queue as an uploaded PDF, just a second source feeding it.
+              </p>
+              {googleNotice && (
+                <p className="mb-4 rounded-card border border-accent bg-surface-alt p-3 text-sm text-text">{googleNotice}</p>
+              )}
+              {googleLoading ? (
+                <p className="text-sm text-muted">Loading…</p>
+              ) : google?.connected ? (
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-center justify-between rounded-card border border-border bg-surface-alt p-3">
+                    <div>
+                      <p className="text-sm font-medium text-text">Connected</p>
+                      <p className="text-xs text-muted">{google.googleEmail}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={onDisconnectGoogle}
+                      disabled={disconnecting}
+                      className="text-sm text-red-500 disabled:opacity-50"
+                    >
+                      {disconnecting ? 'Disconnecting…' : 'Disconnect'}
+                    </button>
+                  </div>
+                  <div>
+                    <button
+                      type="button"
+                      onClick={onSyncGoogle}
+                      disabled={syncing}
+                      className="rounded-card border border-border px-4 py-2 text-sm font-medium text-text hover:bg-surface-alt disabled:opacity-50"
+                    >
+                      {syncing ? 'Syncing…' : 'Sync now'}
+                    </button>
+                    <p className="mt-2 text-xs text-muted">
+                      New transcripts also sync automatically in the background every 15 minutes — use this to pull
+                      one in right away.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onConnectGoogle}
+                  disabled={connecting}
+                  className="rounded-card bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                >
+                  {connecting ? 'Redirecting…' : 'Connect Google Workspace'}
+                </button>
               )}
             </div>
           </div>

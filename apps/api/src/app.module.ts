@@ -26,6 +26,7 @@ import { BlockerReportsModule } from './blocker-reports/blocker-reports.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { ReportsModule } from './reports/reports.module';
 import { MomModule } from './mom/mom.module';
+import { MeetingSyncModule } from './meeting-sync/meeting-sync.module';
 
 @Module({
   imports: [
@@ -64,6 +65,7 @@ import { MomModule } from './mom/mom.module';
     DashboardModule,
     ReportsModule,
     MomModule,
+    MeetingSyncModule,
   ],
   controllers: [HealthController],
 })
