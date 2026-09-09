@@ -122,10 +122,35 @@ function AnimatedNumber({ value }: { value: number }) {
  * bottom edge of the hero card. Built as one long tiled path (each blip is 100 viewBox units) so
  * a perfectly seamless loop only needs to shift by exactly one blip's width; kept low-opacity and
  * edge-faded so it reads as background texture, not a distraction. */
+// A cycle's random duration is picked fresh from this range each time it loops, so the trace's
+// pace drifts like a real pulse rate rather than ticking along at one metronomic speed.
+const PULSE_MIN_SECONDS = 2.2;
+const PULSE_MAX_SECONDS = 4.4;
+
+function randomPulseDuration(): number {
+  return PULSE_MIN_SECONDS + Math.random() * (PULSE_MAX_SECONDS - PULSE_MIN_SECONDS);
+}
+
 function PulseLine() {
   const unit = (o: number) =>
     `M${o},16 H${o + 12} L${o + 16},11 L${o + 20},16 H${o + 34} L${o + 37},21 L${o + 40},2 L${o + 43},28 L${o + 46},16 H${o + 62} L${o + 66},12 L${o + 70},16 H${o + 100}`;
   const path = Array.from({ length: 24 }, (_, i) => unit(i * 100)).join(' ');
+
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [duration, setDuration] = useState(randomPulseDuration);
+
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    // The path tiles seamlessly every 100 viewBox units, and the animation shifts by exactly one
+    // tile per iteration — so re-rolling the duration right as one iteration ends and the next
+    // begins never causes a visible jump, only a change in pace from that point on.
+    function onIteration() {
+      setDuration(randomPulseDuration());
+    }
+    el.addEventListener('animationiteration', onIteration);
+    return () => el.removeEventListener('animationiteration', onIteration);
+  }, []);
 
   return (
     <div
@@ -133,10 +158,11 @@ function PulseLine() {
       style={{ maskImage: 'linear-gradient(to right, transparent, black 12%, black 88%, transparent)' }}
     >
       <svg
+        ref={svgRef}
         viewBox="0 0 2400 32"
         preserveAspectRatio="none"
         className="h-full w-[2400px]"
-        style={{ animation: 'pulse-scan 3.2s linear infinite' }}
+        style={{ animationName: 'pulse-scan', animationTimingFunction: 'linear', animationIterationCount: 'infinite', animationDuration: `${duration}s` }}
       >
         <path d={path} fill="none" stroke="var(--color-accent)" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
       </svg>
