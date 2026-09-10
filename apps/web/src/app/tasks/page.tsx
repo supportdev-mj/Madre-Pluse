@@ -175,8 +175,13 @@ export default function TasksPage() {
                 type="button"
                 onClick={() => setActiveTab(tab.id)}
                 disabled={collapsed}
-                className={`truncate rounded-card py-1.5 font-medium transition-all duration-300 ease-out ${
-                  collapsed ? 'flex-[0] px-0 opacity-0' : 'flex-1 px-2 opacity-100'
+                // flex-grow itself never changes (every tab keeps flex-1) — only max-width is
+                // animated. Transitioning flex-grow directly looked smooth expanding but snappy
+                // collapsing back (an asymmetric browser quirk with animating that property);
+                // max-width transitions the same way in both directions. The other flexible tabs
+                // (still flex-1, uncapped) automatically absorb whatever width this gives up.
+                className={`flex-1 truncate rounded-card py-1.5 font-medium transition-all duration-300 ease-out ${
+                  collapsed ? 'max-w-0 px-0 opacity-0' : 'max-w-full px-2 opacity-100'
                 } ${isHighlighted ? tab.activeClass : tab.idleClass}`}
               >
                 {tab.label}
