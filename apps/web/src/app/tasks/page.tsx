@@ -160,11 +160,14 @@ export default function TasksPage() {
         {/* The board view already groups tasks into columns by status, so the tabs are redundant
             there — instead of hiding the row (leaving blank space) or unmounting it (causing the
             toolbar below to jump), every tab but All smoothly collapses to zero width and All
-            grows to fill the bar, then reverses just as smoothly switching back. */}
+            grows to fill the bar, then reverses just as smoothly switching back.
+            CSS Grid with `fr` tracks, not flexbox — flex-grow/max-width transitions both turned
+            out to animate asymmetrically (smooth one direction, janky the other), because the
+            browser has to re-run flexbox's iterative grow/shrink resolution every frame. Grid
+            tracks are just interpolated length values, so both directions look identical. */}
         <div
-          className={`mb-4 flex items-stretch rounded-card border border-border bg-surface p-1.5 text-sm transition-[gap] duration-300 ease-out ${
-            view === 'board' ? 'gap-0' : 'gap-1'
-          }`}
+          className="mb-4 grid items-stretch gap-1 rounded-card border border-border bg-surface p-1.5 text-sm transition-[grid-template-columns] duration-300 ease-out"
+          style={{ gridTemplateColumns: TABS.map((t) => (view === 'board' && t.id !== 'ALL' ? '0fr' : '1fr')).join(' ') }}
         >
           {TABS.map((tab) => {
             const collapsed = view === 'board' && tab.id !== 'ALL';
@@ -175,13 +178,8 @@ export default function TasksPage() {
                 type="button"
                 onClick={() => setActiveTab(tab.id)}
                 disabled={collapsed}
-                // flex-grow itself never changes (every tab keeps flex-1) — only max-width is
-                // animated. Transitioning flex-grow directly looked smooth expanding but snappy
-                // collapsing back (an asymmetric browser quirk with animating that property);
-                // max-width transitions the same way in both directions. The other flexible tabs
-                // (still flex-1, uncapped) automatically absorb whatever width this gives up.
-                className={`flex-1 truncate rounded-card py-1.5 font-medium transition-all duration-300 ease-out ${
-                  collapsed ? 'max-w-0 px-0 opacity-0' : 'max-w-full px-2 opacity-100'
+                className={`overflow-hidden truncate rounded-card py-1.5 font-medium transition-[opacity,padding] duration-300 ease-out ${
+                  collapsed ? 'px-0 opacity-0' : 'px-2 opacity-100'
                 } ${isHighlighted ? tab.activeClass : tab.idleClass}`}
               >
                 {tab.label}
