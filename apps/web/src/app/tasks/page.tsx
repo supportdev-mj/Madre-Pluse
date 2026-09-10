@@ -34,7 +34,10 @@ const STATUS_LABELS: Record<TaskStatusName, string> = {
 type TaskTab = 'ALL' | 'TODO' | 'IN_PROGRESS' | 'UNDER_VERIFICATION' | 'TO_VERIFY' | 'DONE' | 'FAILED';
 
 const TABS: { id: TaskTab; label: string; activeClass: string; idleClass: string }[] = [
-  { id: 'ALL', label: 'All', activeClass: 'bg-text text-white', idleClass: 'text-muted hover:bg-surface-alt hover:text-text' },
+  // A fixed slate rather than bg-text/text-white — bg-text tracks the theme (dark in light mode,
+  // light in dark mode), which combined with white text was fine in light mode but nearly
+  // unreadable in dark mode (light pill, near-white text).
+  { id: 'ALL', label: 'All', activeClass: 'bg-slate-700 text-white', idleClass: 'text-muted hover:bg-surface-alt hover:text-text' },
   { id: 'TODO', label: 'To Do', activeClass: 'bg-slate-500 text-white', idleClass: 'text-slate-500 hover:bg-surface-alt' },
   { id: 'IN_PROGRESS', label: 'In Progress', activeClass: 'bg-sky-500 text-white', idleClass: 'text-sky-600 hover:bg-surface-alt' },
   {
@@ -154,24 +157,32 @@ export default function TasksPage() {
 
         {error && <p className="mb-4 text-sm text-red-500">{error}</p>}
 
-        {/* The board view already groups tasks into columns by status, so the tabs would be
-            redundant there — kept mounted (just invisible) so the toolbar below doesn't jump
-            up and shift under the cursor when Board is clicked. */}
+        {/* The board view already groups tasks into columns by status, so the tabs are redundant
+            there — instead of hiding the row (leaving blank space) or unmounting it (causing the
+            toolbar below to jump), every tab but All smoothly collapses to zero width and All
+            grows to fill the bar, then reverses just as smoothly switching back. */}
         <div
-          className={`mb-4 flex items-stretch gap-1 rounded-card border border-border bg-surface p-1.5 text-sm ${view === 'board' ? 'invisible' : ''}`}
+          className={`mb-4 flex items-stretch rounded-card border border-border bg-surface p-1.5 text-sm transition-[gap] duration-300 ease-out ${
+            view === 'board' ? 'gap-0' : 'gap-1'
+          }`}
         >
-          {TABS.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex-1 truncate rounded-card px-2 py-1.5 font-medium ${
-                activeTab === tab.id ? tab.activeClass : tab.idleClass
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
+          {TABS.map((tab) => {
+            const collapsed = view === 'board' && tab.id !== 'ALL';
+            const isHighlighted = view === 'board' ? tab.id === 'ALL' : activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                disabled={collapsed}
+                className={`truncate rounded-card py-1.5 font-medium transition-all duration-300 ease-out ${
+                  collapsed ? 'flex-[0] px-0 opacity-0' : 'flex-1 px-2 opacity-100'
+                } ${isHighlighted ? tab.activeClass : tab.idleClass}`}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
         </div>
 
         <div className="mb-4 flex flex-wrap items-center justify-between gap-4">

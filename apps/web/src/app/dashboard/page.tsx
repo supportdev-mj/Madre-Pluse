@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type {
   DashboardActivityItem,
   DashboardMemberWorkload,
@@ -86,6 +86,95 @@ function timeAgo(iso: string): string {
   return `${days}d ago`;
 }
 
+/** Tweens a displayed number smoothly toward `target` whenever it changes (e.g. switching the
+ * Personal/Team filter) instead of snapping straight to the new value. */
+function useAnimatedNumber(target: number, duration = 500): number {
+  const [value, setValue] = useState(target);
+  const fromRef = useRef(target);
+
+  useEffect(() => {
+    const from = fromRef.current;
+    if (from === target) return;
+    let raf: number;
+    const start = performance.now();
+    function tick(now: number) {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - (1 - t) ** 3;
+      setValue(Math.round(from + (target - from) * eased));
+      if (t < 1) {
+        raf = requestAnimationFrame(tick);
+      } else {
+        fromRef.current = target;
+      }
+    }
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, duration]);
+
+  return value;
+}
+
+function AnimatedNumber({ value }: { value: number }) {
+  return <>{useAnimatedNumber(value)}</>;
+}
+
+/** A quiet nod to the app's name — a heartbeat-monitor trace that endlessly scrolls along the
+ * bottom edge of the hero card, at a fixed pace. Each blip's shape is randomized a little (peak
+ * height, dip depth, P-wave bump) so consecutive beats aren't stamped-identical copies, like a
+ * real monitor. The sequence of BEATS_PER_LOOP randomized blips is generated once per page load,
+ * then duplicated back-to-back — animating by exactly one sequence-width keeps the loop seamless
+ * (the visible window always has a full copy of the sequence to show, so it never runs dry), while
+ * still showing BEATS_PER_LOOP different-looking beats flow past before anything repeats. */
+const UNIT_WIDTH = 100;
+const BEATS_PER_LOOP = 12;
+const SEQUENCE_WIDTH = UNIT_WIDTH * BEATS_PER_LOOP;
+// Preserves the original pace (100 viewBox units every 3.2s) now that a full loop covers many units.
+const LOOP_SECONDS = (SEQUENCE_WIDTH / UNIT_WIDTH) * 3.2;
+
+interface BeatShape {
+  pBump: number; // P wave bump, y 8-13 (baseline 16 — smaller y = taller bump)
+  rPeak: number; // R spike, y 1-5
+  sDip: number; // S dip, y 24-32
+}
+
+function randomBeatShape(): BeatShape {
+  return { pBump: 8 + Math.random() * 5, rPeak: 1 + Math.random() * 4, sDip: 24 + Math.random() * 8 };
+}
+
+function beatPath(o: number, { pBump, rPeak, sDip }: BeatShape): string {
+  return `M${o},16 H${o + 12} L${o + 16},${pBump.toFixed(1)} L${o + 20},16 H${o + 34} L${o + 37},21 L${o + 40},${rPeak.toFixed(1)} L${o + 43},${sDip.toFixed(1)} L${o + 46},16 H${o + 62} L${o + 66},12 L${o + 70},16 H${o + UNIT_WIDTH}`;
+}
+
+/** Two identical copies of the same randomized beat sequence, back-to-back — so shifting by
+ * exactly one sequence-width always has a full copy left to show (no gap), and the wrap from the
+ * end of copy two back to the start of copy one is seamless since they're the same beats. */
+function buildPulsePath(beats: BeatShape[]): string {
+  return [...beats, ...beats].map((shape, i) => beatPath(i * UNIT_WIDTH, shape)).join(' ');
+}
+
+function PulseLine() {
+  // Generated once on mount, not re-rolled on every render — a stable random pattern for the
+  // page's lifetime; refresh the page for a new one.
+  const [beats] = useState(() => Array.from({ length: BEATS_PER_LOOP }, randomBeatShape));
+  const path = buildPulsePath(beats);
+
+  return (
+    <div
+      className="pointer-events-none absolute inset-x-0 bottom-0 h-8 opacity-25"
+      style={{ maskImage: 'linear-gradient(to right, transparent, black 12%, black 88%, transparent)' }}
+    >
+      <svg
+        viewBox={`0 0 ${SEQUENCE_WIDTH * 2} 32`}
+        preserveAspectRatio="none"
+        className="h-full"
+        style={{ width: SEQUENCE_WIDTH * 2, animation: `pulse-scan ${LOOP_SECONDS}s linear infinite` }}
+      >
+        <path d={path} fill="none" stroke="var(--color-accent)" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </div>
+  );
+}
+
 function Icon({ path, className = 'h-4 w-4' }: { path: string; className?: string }) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor" className={className}>
@@ -104,6 +193,8 @@ const ICON_PATHS = {
 };
 
 function Metric({ label, value, sub, iconPath, tone }: { label: string; value: string | number; sub: string; iconPath: string; tone: string }) {
+  const animated = useAnimatedNumber(typeof value === 'number' ? value : 0);
+  const displayValue = typeof value === 'number' ? animated : value;
   return (
     <div className="min-w-0 rounded-card border border-border bg-surface p-4">
       <div className="flex items-start justify-between">
@@ -112,7 +203,7 @@ function Metric({ label, value, sub, iconPath, tone }: { label: string; value: s
           <Icon path={iconPath} className="h-4 w-4" />
         </div>
       </div>
-      <p className="mt-2 font-mono text-2xl font-bold tracking-tight text-text">{value}</p>
+      <p className="mt-2 font-mono text-2xl font-bold tracking-tight text-text">{displayValue}</p>
       <p className="mt-0.5 text-xs text-faint">{sub}</p>
     </div>
   );
@@ -124,7 +215,9 @@ function StatusBarChart({ statusCounts }: { statusCounts: Record<TaskStatusName,
     <div className="flex h-44 items-end gap-4 px-1">
       {STATUS_ORDER.map((s) => (
         <div key={s} className="flex flex-1 flex-col items-center gap-2">
-          <span className="font-mono text-xs text-faint">{statusCounts[s]}</span>
+          <span className="font-mono text-xs text-faint">
+            <AnimatedNumber value={statusCounts[s]} />
+          </span>
           <div
             className="w-full max-w-12 rounded-t-md transition-all"
             style={{ height: `${(statusCounts[s] / max) * 100}%`, minHeight: 4, backgroundColor: STATUS_COLORS[s] }}
@@ -163,6 +256,7 @@ function DonutChart({ data, size = 128, strokeWidth = 18 }: { data: { label: str
                 strokeWidth={strokeWidth}
                 strokeDasharray={`${dash} ${circumference - dash}`}
                 strokeDashoffset={-offset}
+                className="transition-[stroke-dasharray,stroke-dashoffset] duration-500 ease-out"
               />
             );
             offset += dash;
@@ -232,12 +326,19 @@ export default function DashboardPage() {
   // Only an admin/manager has a broader "team" to switch to — a plain user's Team view would be
   // identical to Personal, so they never see the toggle and always get the personal-only summary.
   const canFilterByTeam = role === 'ADMIN' || role === 'MANAGER';
+  const hasLoadedOnceRef = useRef(false);
 
   useEffect(() => {
     if (status !== 'authenticated') return;
-    setLoading(true);
+    // Only the very first load blanks the page behind "Loading…" — switching Personal/Team after
+    // that keeps the current numbers/charts on screen and lets them transition smoothly in place
+    // once the new data lands, instead of the whole dashboard flashing away and back.
+    if (!hasLoadedOnceRef.current) setLoading(true);
     apiFetch<DashboardSummary>(`/dashboard?scope=${scope}`)
-      .then(setSummary)
+      .then((data) => {
+        setSummary(data);
+        hasLoadedOnceRef.current = true;
+      })
       .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load dashboard'))
       .finally(() => setLoading(false));
   }, [status, scope]);
@@ -260,19 +361,29 @@ export default function DashboardPage() {
           <p className="text-muted">Loading…</p>
         ) : (
           <div className="flex flex-col gap-4">
-            <div className="overflow-hidden rounded-card border border-border bg-surface">
+            <div className="relative overflow-hidden rounded-card border border-border bg-surface">
+              <PulseLine />
               <div className="flex flex-wrap items-center justify-between gap-3 p-5" style={HERO_GRID_BG}>
                 <div>
-                  <p className="font-mono text-xs font-bold uppercase tracking-wide text-muted">
-                    {canFilterByTeam ? (scope === 'personal' ? 'Personal overview' : 'Team overview') : 'Personal overview'}
+                  <p className="flex items-baseline font-mono text-xs font-bold uppercase tracking-wide text-muted">
+                    <span
+                      className={`inline-block overflow-hidden whitespace-nowrap transition-[width] duration-300 ease-out ${
+                        scope === 'personal' ? 'w-[9ch]' : 'w-[5ch]'
+                      }`}
+                    >
+                      {scope === 'personal' ? 'Personal' : 'Team'}
+                    </span>
+                    <span>&nbsp;overview</span>
                   </p>
                   <h1 className="mt-1 text-xl font-bold tracking-tight text-text">
                     {greeting()}, {user?.name?.split(' ')[0] ?? 'there'}
                   </h1>
                   <p className="mt-1 text-sm text-muted">
-                    {open} open ·{' '}
-                    <span className={summary.overdueCount > 0 ? 'font-medium text-red-500' : 'text-muted'}>{summary.overdueCount} overdue</span> ·{' '}
-                    {done} done
+                    <AnimatedNumber value={open} /> open ·{' '}
+                    <span className={summary.overdueCount > 0 ? 'font-medium text-red-500' : 'text-muted'}>
+                      <AnimatedNumber value={summary.overdueCount} /> overdue
+                    </span>{' '}
+                    · <AnimatedNumber value={done} /> done
                   </p>
                 </div>
                 <div className="flex items-center gap-3">
@@ -327,7 +438,10 @@ export default function DashboardPage() {
                     {priorityData.map((d) => (
                       <div key={d.label} className="flex items-center gap-2 text-xs text-muted">
                         <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ backgroundColor: d.color }} />
-                        {d.label} · <span className="font-semibold text-text">{d.value}</span>
+                        {d.label} ·{' '}
+                        <span className="font-semibold text-text">
+                          <AnimatedNumber value={d.value} />
+                        </span>
                       </div>
                     ))}
                   </div>
