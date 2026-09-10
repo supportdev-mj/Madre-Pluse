@@ -34,7 +34,10 @@ const STATUS_LABELS: Record<TaskStatusName, string> = {
 type TaskTab = 'ALL' | 'TODO' | 'IN_PROGRESS' | 'UNDER_VERIFICATION' | 'TO_VERIFY' | 'DONE' | 'FAILED';
 
 const TABS: { id: TaskTab; label: string; activeClass: string; idleClass: string }[] = [
-  { id: 'ALL', label: 'All', activeClass: 'bg-text text-white', idleClass: 'text-muted hover:bg-surface-alt hover:text-text' },
+  // A fixed slate rather than bg-text/text-white — bg-text tracks the theme (dark in light mode,
+  // light in dark mode), which combined with white text was fine in light mode but nearly
+  // unreadable in dark mode (light pill, near-white text).
+  { id: 'ALL', label: 'All', activeClass: 'bg-slate-700 text-white', idleClass: 'text-muted hover:bg-surface-alt hover:text-text' },
   { id: 'TODO', label: 'To Do', activeClass: 'bg-slate-500 text-white', idleClass: 'text-slate-500 hover:bg-surface-alt' },
   { id: 'IN_PROGRESS', label: 'In Progress', activeClass: 'bg-sky-500 text-white', idleClass: 'text-sky-600 hover:bg-surface-alt' },
   {
