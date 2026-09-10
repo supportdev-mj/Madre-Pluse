@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
+import { LogoLoader } from '../components/logo-loader';
 import { useRequireAuth } from '../lib/use-require-auth';
 
 export default function Home() {
@@ -13,9 +14,5 @@ export default function Home() {
     router.replace(role === 'ADMIN' || role === 'MANAGER' ? '/dashboard' : '/tasks');
   }, [status, role, router]);
 
-  return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-4 p-8">
-      <p className="text-muted">Loading…</p>
-    </main>
-  );
+  return <LogoLoader />;
 }
