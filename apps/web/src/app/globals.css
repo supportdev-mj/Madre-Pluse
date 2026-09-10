@@ -29,11 +29,25 @@ body {
   color: var(--color-text);
 }
 
-/* Dashboard hero card's decorative heartbeat trace — see PulseLine in app/dashboard/page.tsx.
-   -1200px must stay equal to that file's SEQUENCE_WIDTH (UNIT_WIDTH * BEATS_PER_LOOP) — it's the
-   width of one full randomized beat sequence, which is what the loop shifts by each cycle. */
+/* Decorative heartbeat trace — see components/pulse-line.tsx (used on the dashboard hero card and
+   the login page). -1200px must stay equal to that file's SEQUENCE_WIDTH (UNIT_WIDTH *
+   BEATS_PER_LOOP) — it's the width of one full randomized beat sequence, which is what the loop
+   shifts by each cycle. */
 @keyframes pulse-scan {
   to {
     transform: translateX(-1200px);
+  }
+}
+
+/* Logo "breathing" pulse — see components/logo-loader.tsx (the branded post-login transition). */
+@keyframes logo-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.06);
+    opacity: 0.82;
   }
 }

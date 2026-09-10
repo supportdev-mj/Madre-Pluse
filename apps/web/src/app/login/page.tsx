@@ -5,7 +5,14 @@ import { useRouter } from 'next/navigation';
 import { useState, type FormEvent } from 'react';
 import { loginSchema } from '@madre-pulse/shared';
 import { FormField } from '../../components/form-field';
+import { PulseLine } from '../../components/pulse-line';
 import { useAuth } from '../../lib/auth-context';
+
+const GRID_BG = {
+  backgroundImage:
+    'linear-gradient(rgba(14,165,233,.08) 1px, transparent 1px), linear-gradient(90deg, rgba(14,165,233,.08) 1px, transparent 1px)',
+  backgroundSize: '22px 22px',
+};
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -37,8 +44,17 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-6 p-8">
-      <div className="w-full max-w-sm rounded-card border border-border bg-surface p-6">
+    <main className="relative flex min-h-screen flex-col items-center justify-center gap-6 overflow-hidden p-8" style={GRID_BG}>
+      <PulseLine heightClassName="h-20" opacityClassName="opacity-[0.18]" />
+
+      <div className="relative flex flex-col items-center gap-3">
+        <div className="inline-block rounded-md dark:bg-white dark:p-1.5">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.png" alt="Madre Pulse" className="h-12 w-auto rounded-md" />
+        </div>
+      </div>
+
+      <div className="relative w-full max-w-sm rounded-card border border-border bg-surface p-6 shadow-sm">
         <h1 className="mb-1 text-xl font-bold text-text">Sign in</h1>
         <p className="mb-6 text-sm text-muted">Welcome back to Madre Pulse.</p>
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
