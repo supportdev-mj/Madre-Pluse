@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import { DueSoonReminders } from '../components/due-soon-reminders';
 import { AuthProvider } from '../lib/auth-context';
 import { NotificationsProvider } from '../lib/notifications-context';
 import { ThemeProvider } from '../lib/theme-context';
@@ -26,7 +27,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
         <ThemeProvider>
           <AuthProvider>
-            <NotificationsProvider>{children}</NotificationsProvider>
+            <NotificationsProvider>
+              {children}
+              <DueSoonReminders />
+            </NotificationsProvider>
           </AuthProvider>
         </ThemeProvider>
       </body>

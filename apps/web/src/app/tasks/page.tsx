@@ -3,7 +3,6 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import {
-  TASK_STATUSES,
   type ClientSummary,
   type CreateTaskInput,
   type MemberSummary,
@@ -51,10 +50,19 @@ const TABS: { id: TaskTab; label: string; activeClass: string; idleClass: string
   { id: 'FAILED', label: 'Failed', activeClass: 'bg-red-500 text-white', idleClass: 'text-red-500 hover:bg-surface-alt' },
 ];
 
-function tabStatusParam(tab: TaskTab): TaskStatusName | undefined {
-  if (tab === 'ALL') return undefined;
-  if (tab === 'UNDER_VERIFICATION') return 'TO_VERIFY';
-  return tab;
+/** Every tab is just a client-side filter over the one already-fetched, visibility-scoped task
+ * list — this is also what powers the per-tab counts, since counting is just filtering + length. */
+function filterByTab(allTasks: TaskSummary[], tab: TaskTab, currentUserId: string | undefined): TaskSummary[] {
+  switch (tab) {
+    case 'ALL':
+      return allTasks;
+    case 'UNDER_VERIFICATION':
+      return allTasks.filter((t) => t.status === 'TO_VERIFY' && t.assignees.some((a) => a.userId === currentUserId));
+    case 'TO_VERIFY':
+      return allTasks.filter((t) => t.status === 'TO_VERIFY' && t.canVerify);
+    default:
+      return allTasks.filter((t) => t.status === tab);
+  }
 }
 
 function formatDueDate(iso: string | null): string {
@@ -64,7 +72,10 @@ function formatDueDate(iso: string | null): string {
 
 export default function TasksPage() {
   const { status, role, user } = useRequireAuth();
-  const [tasks, setTasks] = useState<TaskSummary[]>([]);
+  // The full, visibility-scoped task list (only ever narrowed server-side by the Assignee filter)
+  // — every tab, and every tab's count, is just a client-side filter over this one list, so
+  // switching tabs no longer needs a round trip and every count stays in sync automatically.
+  const [allTasks, setAllTasks] = useState<TaskSummary[]>([]);
   const [members, setMembers] = useState<MemberSummary[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [clients, setClients] = useState<ClientSummary[]>([]);
@@ -77,22 +88,11 @@ export default function TasksPage() {
   const [showAddModal, setShowAddModal] = useState(false);
 
   async function loadTasks() {
-    // The board view already groups tasks into columns by every status, so the tabs (and their
-    // filtering) don't apply there — only the assignee filter still does.
-    const effectiveTab = view === 'board' ? 'ALL' : activeTab;
     const params = new URLSearchParams();
-    const statusParam = tabStatusParam(effectiveTab);
-    if (statusParam) params.set('status', statusParam);
     if (assigneeFilter) params.set('assigneeId', assigneeFilter);
     const qs = params.toString();
     const data = await apiFetch<TaskSummary[]>(`/tasks${qs ? `?${qs}` : ''}`);
-    const filtered =
-      effectiveTab === 'UNDER_VERIFICATION'
-        ? data.filter((t) => t.assignees.some((a) => a.userId === user?.id))
-        : effectiveTab === 'TO_VERIFY'
-          ? data.filter((t) => t.canVerify)
-          : data;
-    setTasks(filtered);
+    setAllTasks(data);
   }
 
   useEffect(() => {
@@ -107,7 +107,7 @@ export default function TasksPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
 
-  // Also covers the initial load — this fires on mount with the default tab/filter too.
+  // Also covers the initial load — this fires on mount with the default assignee filter too.
   useEffect(() => {
     if (status !== 'authenticated') return;
     setLoading(true);
@@ -115,18 +115,18 @@ export default function TasksPage() {
       .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load tasks'))
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, activeTab, assigneeFilter, view]);
+  }, [status, assigneeFilter]);
 
   async function onAddTask(input: CreateTaskInput) {
     const task = await apiFetch<TaskSummary>('/tasks', { method: 'POST', body: JSON.stringify(input) });
-    setTasks((prev) => [task, ...prev]);
+    setAllTasks((prev) => [task, ...prev]);
   }
 
   async function onDelete(id: string) {
     setError(null);
     try {
       await apiFetch(`/tasks/${id}`, { method: 'DELETE' });
-      setTasks((prev) => prev.filter((t) => t.id !== id));
+      setAllTasks((prev) => prev.filter((t) => t.id !== id));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete task.');
     }
@@ -136,6 +136,12 @@ export default function TasksPage() {
 
   // Only an admin can delete a task once it's created.
   const canDelete = role === 'ADMIN';
+  // Board groups every status into its own column already, so it always shows everything.
+  const tasks = view === 'board' ? allTasks : filterByTab(allTasks, activeTab, user?.id);
+  const tabCounts = Object.fromEntries(TABS.map((tab) => [tab.id, filterByTab(allTasks, tab.id, user?.id).length])) as Record<
+    TaskTab,
+    number
+  >;
 
   return (
     <div className="min-h-screen sm:pl-60">
@@ -183,6 +189,9 @@ export default function TasksPage() {
                 } ${isHighlighted ? tab.activeClass : tab.idleClass}`}
               >
                 {tab.label}
+                <span className={`ml-1.5 text-xs font-normal ${isHighlighted ? 'text-white/80' : 'opacity-60'}`}>
+                  {tabCounts[tab.id]}
+                </span>
               </button>
             );
           })}
