@@ -66,6 +66,12 @@ export class MomController {
     return this.momService.upload(file);
   }
 
+  @Roles('ADMIN', 'MANAGER')
+  @Get('uploads')
+  listUploads() {
+    return this.momService.listUploads();
+  }
+
   @Roles('ADMIN')
   @Delete('uploads/:id')
   @HttpCode(204)

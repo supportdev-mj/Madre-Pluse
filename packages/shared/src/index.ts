@@ -672,7 +672,9 @@ export type UpdateMomCandidateInput = z.infer<typeof updateMomCandidateSchema>;
 export interface MomUploadSummary {
   id: string;
   fileName: string;
-  sizeBytes: number;
+  source: MomUploadSourceName;
+  formattedMinutes: string | null;
+  sizeBytes: number | null;
   itemsFound: number;
   itemsNew: number;
   uploadedById: string;
@@ -702,6 +704,8 @@ export interface MomTaskCandidateSummary {
 }
 
 export interface MomUploadResult {
+  momUploadId: string;
+  formattedMinutes: string | null;
   itemsFound: number;
   itemsNew: number;
   itemsSkipped: number;

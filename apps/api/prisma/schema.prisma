@@ -19,6 +19,9 @@
 // Slice 22: MomUpload.source — a synced Google Meet transcript feeds the exact same pipeline as a
 // PDF upload (same OrgAiSettings key, same MomTaskCandidate review queue), via GoogleIntegration's
 // existing OAuth connection. No new models needed, just a second way to populate MomUpload.
+// Slice 23: MomUpload.formattedMinutes — the AI now also writes an actual Minutes of Meeting
+// document from the source (PDF or transcript), not just extracted action items. One fixed format
+// for now; template selection is a planned future addition, not built yet.
 
 generator client {
   provider      = "prisma-client-js"
@@ -588,6 +591,9 @@ model OrgAiSettings {
 // different source. The extraction result (one row per action item found) lives in
 // MomTaskCandidate below — kept separate so a single upload can produce many review-queue items.
 // storageKey/sizeBytes are PDF-only (nullable); sourceMeetingRecordId/rawTranscript are Meet-only.
+// formattedMinutes (Slice 23) is the actual "Minutes of Meeting" document the AI writes from the
+// source — nullable because generation is best-effort and must never block action-item extraction
+// (a transcript with no usable content can still produce candidates with no minutes, or vice versa).
 model MomUpload {
   id                    String          @id @default(cuid())
   orgId                 String
@@ -598,6 +604,7 @@ model MomUpload {
   sizeBytes             Int?
   sourceMeetingRecordId String?         @unique
   rawTranscript         String?
+  formattedMinutes      String?
   itemsFound            Int
   itemsNew              Int
   createdAt             DateTime        @default(now())

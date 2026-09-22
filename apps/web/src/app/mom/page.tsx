@@ -8,6 +8,7 @@ import {
   type MomCandidateStatusName,
   type MomTaskCandidateSummary,
   type MomUploadResult,
+  type MomUploadSummary,
 } from '@madre-pulse/shared';
 import { AppNav } from '../../components/app-nav';
 import { apiFetch } from '../../lib/api-client';
@@ -29,11 +30,12 @@ interface UploadGroup {
   momUploadId: string;
   momUploadFileName: string;
   momUploadSource: MomTaskCandidateSummary['momUploadSource'];
+  formattedMinutes: string | null;
   uploadedAt: string;
   candidates: MomTaskCandidateSummary[];
 }
 
-function groupByUpload(candidates: MomTaskCandidateSummary[]): UploadGroup[] {
+function groupByUpload(candidates: MomTaskCandidateSummary[], uploadsById: Map<string, MomUploadSummary>): UploadGroup[] {
   const groups = new Map<string, UploadGroup>();
   for (const c of candidates) {
     let group = groups.get(c.momUploadId);
@@ -42,6 +44,7 @@ function groupByUpload(candidates: MomTaskCandidateSummary[]): UploadGroup[] {
         momUploadId: c.momUploadId,
         momUploadFileName: c.momUploadFileName,
         momUploadSource: c.momUploadSource,
+        formattedMinutes: uploadsById.get(c.momUploadId)?.formattedMinutes ?? null,
         uploadedAt: c.createdAt,
         candidates: [],
       };
@@ -59,6 +62,7 @@ export default function MomPage() {
 
   const [members, setMembers] = useState<MemberSummary[]>([]);
   const [candidates, setCandidates] = useState<MomTaskCandidateSummary[]>([]);
+  const [uploads, setUploads] = useState<MomUploadSummary[]>([]);
   const [statusFilter, setStatusFilter] = useState<MomCandidateStatusName>('PENDING');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -71,16 +75,22 @@ export default function MomPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editingCandidate, setEditingCandidate] = useState<MomTaskCandidateSummary | null>(null);
   const [expandedUploads, setExpandedUploads] = useState<Set<string>>(new Set());
+  const [expandedMinutes, setExpandedMinutes] = useState<Set<string>>(new Set());
 
   async function loadCandidates(nextStatus: MomCandidateStatusName) {
     const data = await apiFetch<MomTaskCandidateSummary[]>(`/mom/candidates?status=${nextStatus}`);
     setCandidates(data);
   }
 
+  function loadUploads() {
+    if (!isManagerOrAdmin) return Promise.resolve();
+    return apiFetch<MomUploadSummary[]>('/mom/uploads').then(setUploads);
+  }
+
   useEffect(() => {
     if (status !== 'authenticated') return;
     setLoading(true);
-    Promise.all([apiFetch<MemberSummary[]>('/members'), loadCandidates(statusFilter)])
+    Promise.all([apiFetch<MemberSummary[]>('/members'), loadCandidates(statusFilter), loadUploads()])
       .then(([m]) => setMembers(m))
       .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load MOM queue'))
       .finally(() => setLoading(false));
@@ -114,10 +124,9 @@ export default function MomPage() {
       if (fileInputRef.current) fileInputRef.current.value = '';
       if (statusFilter === 'PENDING') {
         setCandidates((prev) => [...result.candidates, ...prev]);
-        if (result.candidates.length > 0) {
-          setExpandedUploads((prev) => new Set(prev).add(result.candidates[0].momUploadId));
-        }
       }
+      setExpandedUploads((prev) => new Set(prev).add(result.momUploadId));
+      await loadUploads();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to process MOM PDF.');
     } finally {
@@ -159,6 +168,7 @@ export default function MomPage() {
     try {
       await apiFetch(`/mom/uploads/${momUploadId}`, { method: 'DELETE' });
       setCandidates((prev) => prev.filter((c) => c.momUploadId !== momUploadId));
+      setUploads((prev) => prev.filter((u) => u.id !== momUploadId));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete this upload.');
     } finally {
@@ -187,9 +197,21 @@ export default function MomPage() {
     });
   }
 
+  function toggleMinutes(id: string) {
+    setExpandedMinutes((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   if (status !== 'authenticated') return null;
 
-  const groups = groupByUpload(candidates);
+  const uploadsById = new Map(uploads.map((u) => [u.id, u]));
+  const groups = groupByUpload(candidates, uploadsById);
+  const groupedIds = new Set(groups.map((g) => g.momUploadId));
+  const minutesOnlyUploads = uploads.filter((u) => !groupedIds.has(u.id) && u.formattedMinutes);
 
   return (
     <div className="min-h-screen sm:pl-60">
@@ -208,8 +230,9 @@ export default function MomPage() {
           <div className="mb-6 rounded-card border border-border bg-surface p-6">
             <h2 className="mb-1 text-base font-semibold text-text">Upload minutes of meeting</h2>
             <p className="mb-4 text-sm text-muted">
-              Upload a MoM PDF. AI reads it, identifies action items and who&apos;s responsible for each, and adds
-              them to the review queue below — nothing becomes a real task until it&apos;s accepted.
+              Upload a MoM PDF. AI writes a formatted set of meeting minutes, identifies action items and
+              who&apos;s responsible for each, and adds them to the review queue below — nothing becomes a real
+              task until it&apos;s accepted.
             </p>
             <form onSubmit={onUpload} className="flex flex-wrap items-center gap-3">
               <input
@@ -315,6 +338,13 @@ export default function MomPage() {
                     </div>
                   </div>
 
+                  {isOpen && g.formattedMinutes && (
+                    <div className="border-t border-border bg-surface px-4 py-3">
+                      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Minutes</h3>
+                      <div className="whitespace-pre-wrap text-sm text-text">{g.formattedMinutes}</div>
+                    </div>
+                  )}
+
                   {isOpen && (
                     <div className="overflow-x-auto border-t border-border">
                       <table className="w-full text-left text-sm">
@@ -405,6 +435,58 @@ export default function MomPage() {
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {isManagerOrAdmin && minutesOnlyUploads.length > 0 && (
+          <div className="mt-6">
+            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">
+              Meeting minutes with no action items
+            </h2>
+            <div className="flex flex-col gap-3">
+              {minutesOnlyUploads.map((u) => {
+                const isOpen = expandedMinutes.has(u.id);
+                return (
+                  <div key={u.id} className="overflow-hidden rounded-card border border-border">
+                    <div className="flex w-full items-center justify-between gap-3 bg-surface-alt px-4 py-3 text-left">
+                      <button
+                        type="button"
+                        onClick={() => toggleMinutes(u.id)}
+                        className="flex min-w-0 flex-1 items-center gap-2"
+                      >
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          strokeWidth={2}
+                          stroke="currentColor"
+                          className={`h-4 w-4 shrink-0 text-muted transition-transform ${isOpen ? 'rotate-90' : ''}`}
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                        </svg>
+                        <span className="truncate text-sm font-medium text-text">{u.fileName}</span>
+                        <span className="shrink-0 text-xs text-muted">{formatDate(u.createdAt)}</span>
+                      </button>
+                      {role === 'ADMIN' && (
+                        <button
+                          type="button"
+                          onClick={() => onDeleteUpload(u.id)}
+                          disabled={busyId === u.id}
+                          className="shrink-0 text-xs text-red-500 hover:underline disabled:opacity-50"
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </div>
+                    {isOpen && (
+                      <div className="border-t border-border bg-surface px-4 py-3">
+                        <div className="whitespace-pre-wrap text-sm text-text">{u.formattedMinutes}</div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
 

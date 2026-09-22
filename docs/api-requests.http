@@ -114,6 +114,7 @@ Content-Type: application/json
 }
 
 ### Upload a MoM PDF — ADMIN or MANAGER. REST Client extension: point @file at a real PDF on disk.
+### Returns MomUploadResult, including the formatted minutes (Slice 23) alongside the candidates.
 # @file = ./sample-mom.pdf
 POST {{baseUrl}}/mom/uploads
 Authorization: Bearer {{login.response.body.accessToken}}
@@ -125,6 +126,15 @@ Content-Type: application/pdf
 
 < {{file}}
 --boundary--
+
+### List every MoM upload (PDF or synced Meet transcript) with its formatted minutes (Slice 23) —
+### ADMIN/MANAGER only. This is the only place an upload with zero action items still shows up.
+GET {{baseUrl}}/mom/uploads
+Authorization: Bearer {{login.response.body.accessToken}}
+
+### Delete an upload and its still-pending candidates — ADMIN only. Already-accepted tasks are unaffected.
+DELETE {{baseUrl}}/mom/uploads/{{momUploadId}}
+Authorization: Bearer {{login.response.body.accessToken}}
 
 ### List pending MOM candidates — ADMIN/MANAGER see every org candidate, others only ones matched to them
 GET {{baseUrl}}/mom/candidates?status=PENDING

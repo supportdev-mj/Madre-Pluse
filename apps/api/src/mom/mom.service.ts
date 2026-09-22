@@ -9,6 +9,7 @@ import type {
   MomTaskCandidateSummary,
   MomUploadResult,
   MomUploadSourceName,
+  MomUploadSummary,
   TaskPriorityName,
   UpdateMomAiSettingsInput,
   UpdateMomCandidateInput,
@@ -90,12 +91,12 @@ export class MomService {
     const uploadedById = this.currentUserId();
 
     const { apiKey, model } = await this.requireOrgAiSettings(orgId);
-    const extracted = await this.extraction.extract(file.buffer.toString('base64'), apiKey, model);
+    const { minutes, items } = await this.extraction.extract(file.buffer.toString('base64'), apiKey, model);
 
     const key = `${orgId}/mom/${randomBytes(8).toString('hex')}-${this.sanitizeFileName(file.originalname)}`;
     await this.storage.upload(key, file.buffer, file.mimetype);
 
-    return this.ingest(orgId, uploadedById, extracted, {
+    return this.ingest(orgId, uploadedById, items, minutes, {
       source: 'PDF',
       fileName: file.originalname,
       storageKey: key,
@@ -121,9 +122,9 @@ export class MomService {
     if (already) return null;
 
     const { apiKey, model } = await this.requireOrgAiSettings(orgId);
-    const extracted = await this.extraction.extractFromTranscript(transcript, apiKey, model);
+    const { minutes, items } = await this.extraction.extractFromTranscript(transcript, apiKey, model);
 
-    return this.ingest(orgId, actorId, extracted, {
+    return this.ingest(orgId, actorId, items, minutes, {
       source: 'GOOGLE_MEET',
       fileName: meetingTitle,
       sourceMeetingRecordId,
@@ -132,11 +133,13 @@ export class MomService {
   }
 
   /** Shared by both ingestion sources: dedupe against existing candidates/tasks, resolve
-   * assignees by name, then create the MomUpload + its MomTaskCandidate rows in one transaction. */
+   * assignees by name, then create the MomUpload (with its formatted minutes) + its
+   * MomTaskCandidate rows in one transaction. */
   private async ingest(
     orgId: string,
     uploadedById: string,
     extracted: ExtractedMomItem[],
+    minutes: string | null,
     upload: {
       source: MomUploadSourceName;
       fileName: string;
@@ -149,7 +152,7 @@ export class MomService {
     const { unique, skipped } = await this.dedupe(orgId, extracted);
     const resolved = await this.resolveAssignees(orgId, unique);
 
-    const candidates = await this.prisma.$transaction(async (tx) => {
+    const { momUploadId, candidates } = await this.prisma.$transaction(async (tx) => {
       const created = await tx.momUpload.create({
         data: {
           orgId,
@@ -160,6 +163,7 @@ export class MomService {
           sizeBytes: upload.sizeBytes ?? null,
           sourceMeetingRecordId: upload.sourceMeetingRecordId ?? null,
           rawTranscript: upload.rawTranscript ?? null,
+          formattedMinutes: minutes,
           itemsFound: extracted.length,
           itemsNew: resolved.length,
         },
@@ -183,15 +187,45 @@ export class MomService {
         });
         candidates.push(candidate);
       }
-      return candidates;
+      return { momUploadId: created.id, candidates };
     });
 
     return {
+      momUploadId,
+      formattedMinutes: minutes,
       itemsFound: extracted.length,
       itemsNew: candidates.length,
       itemsSkipped: skipped,
       candidates: candidates.map((c) => this.toSummary(c)),
     };
+  }
+
+  /**
+   * ADMIN/MANAGER only — lists every MoM upload for the org (PDF or synced Meet transcript),
+   * including its formatted minutes. Deliberately separate from listCandidates(): an upload with
+   * zero extracted action items (a purely informational meeting) would otherwise never surface
+   * anywhere, even though its minutes are still worth keeping — this is the source of truth for
+   * "what meetings/documents have been processed," independent of whether any task came of it.
+   */
+  async listUploads(): Promise<MomUploadSummary[]> {
+    const orgId = requireOrgId(this.cls);
+    const uploads = await this.prisma.momUpload.findMany({
+      where: { orgId },
+      include: { uploadedBy: { select: { name: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+    return uploads.map((u) => ({
+      id: u.id,
+      fileName: u.fileName,
+      source: u.source as MomUploadSourceName,
+      formattedMinutes: u.formattedMinutes,
+      sizeBytes: u.sizeBytes,
+      itemsFound: u.itemsFound,
+      itemsNew: u.itemsNew,
+      uploadedById: u.uploadedById,
+      uploadedByName: u.uploadedBy.name,
+      createdAt: u.createdAt.toISOString(),
+    }));
   }
 
   /** Admin-only, for now: removes an uploaded MOM file and its still-queued candidates. Any
